@@ -1,0 +1,161 @@
+---
+title: Assessment of the cumulative impact from physical pressures on the Baltic Sea using the CumI indicator
+author: Torsten Berg, MariLim
+date: 2021-08-05
+output: NULL
+---
+
+# How to use this document
+This is an R markdown document. The R code within this document can be executed using the R `library(knitr)`:
+
+```{r help-eval-code, eval=FALSE}
+library(knitr)
+# purl() is the same as knit(..., tangle=TRUE)
+source(purl("CumI-assessment.Rmd"))
+```
+
+The documentation can be produced together with executing the R code using:
+
+```{r help-make-doc, eval=FALSE}
+library(rmarkdown)
+library(knitr)
+render("CumI-assessment.Rmd")
+```
+
+# R packages to use
+The R code uses the following libraries which should be installed first (if not present):
+
+```{r}
+library(dplyr)
+# library(naniar)
+# library(stringr)
+library(tibble)
+library(sf)
+```
+
+# Some R functions
+The actual assessment using the CumI applies a range of 'matrix operations' where e.g. sensitivity of a given biotope is combined with the magnitude of pressure. This is done using some fixed rules. These rules and the R function to use them are given below.
+
+The first rule combines resilience and resistance of a biotope to derive the resulting biotope sensitivity:
+
+```{r}
+cumi_sensi_matrix <- tribble(
+   ~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
+   "very low",  "high",              "high",          "moderate",           "moderate",
+   "low",       "high",              "moderate",      "moderate",           "low",
+   "moderate",  "moderate",          "moderate",      "low",                "very low",
+   "high",      "moderate",          "low",           "low",                "very low"
+)
+# some helpers:
+cumi_sensi_matrix_resilience_columns <- 
+   c("resilience_verylow",
+     "resilience_low",
+     "resilience_moderate",
+     "resilience_high")
+     
+names(cumi_sensi_matrix_resilience_columns) <- 
+   c("very low", 
+     "low", 
+     "moderate", 
+     "high")
+     
+cumi_sensi <- function(resistance,resilience) {
+   #
+   # function returning the sensitivity given the resilience
+   # and the resistance as strings
+   #
+   if (! resistance %in% names(cumi_sensi_matrix_resilience_columns)) {return("none")}
+   if (! resilience %in% names(cumi_sensi_matrix_resilience_columns)) {return("none")}
+   res <- resistance # since 'get()' doesn't seem to work in the filter down below ...
+   # identify the column name in the tribble based on the value:
+   myCol <- unname(cumi_sensi_matrix_resilience_columns[resilience])
+   # filter out the right row, seect the the right column there and isolate the value
+   cumi_sensi_matrix %>%
+      filter(resistance==res) %>%
+      select(all_of(myCol)) %>%
+      pull()
+}
+```
+
+The second rule combines biotope sensitivity and the physical magnitude of pressure (= MOP) to derive the assumed impact:
+
+```{r}
+cumi_impact_matrix <- tribble(
+   ~sensitivity, ~MOP_high, ~MOP_moderate, ~MOP_low,   ~MOP_verylow,
+   "high",       "high",    "high",        "m2",       "m1",
+   "moderate",   "high",    "m3",          "m1",       "low",
+   "low",        "m2",      "m1",          "low",      "very low",
+   "very low",   "m1",      "low",         "very low", "very low"
+)
+# some helpers:
+cumi_impact_matrix_MOP_columns <- 
+   c("MOP_verylow",
+     "MOP_low",
+     "MOP_moderate",
+     "MOP_high")
+     
+names(cumi_impact_matrix_MOP_columns) <- 
+   c("very low", 
+     "low", 
+     "moderate", 
+     "high")
+     
+cumi_impact <- function(MOP,sensitivity) {
+   #
+   # function returning the impact given the MOP
+   # and the sensitivity as strings
+   #
+   if (! MOP %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
+   if (! sensitivity %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
+   sens <- sensitivity # since 'get()' doesn't seem to work in the filter down below ...
+   myMopCol <- unname(cumi_impact_matrix_MOP_columns[MOP])
+   cumi_impact_matrix %>%
+      filter(sensitivity==sens) %>%
+      select(all_of(myMopCol)) %>%
+      pull()
+}
+```
+
+# General workflow
+
+- read habitat/biotope map
+- assign sensitivities to biotopes
+- apply spatial sensitivity to regions with Mytilus, Zostera, Furcellaria, Fucus, Chara
+
+- prepare pressure data for disturbance:
+1. cables under construction 1000m
+2. coastal defense under construction 500m
+3. pipelines 300m
+4. OWP in operation 100m (loss)
+5. OWP under construction 1000m
+6. fishery (from ICES SAR numbers) [a = surface, b = subsurface]
+7. mariculure with finfish 1000m (loss)
+8. mariculture with shellfish 1000m (loss)
+9. extraction of gravel and sand 500m (loss)
+10. deposition areas 500m
+11. deposition points 500m
+12. dredged areas 500m
+13. dredging points 500m
+14. shipping
+
+- prepare pressure data for loss:
+A. cables in operation 1.5m
+B. coastal defense 50m
+C. harbours 200m
+D. mariculture with finfish 150m
+E. mariculture with shellfish as points 150m
+F. mariculture with shellfish as areas 
+G. oil platforms 25m2
+H. pipelines 15m
+I. OWP in operation 30m
+J. extraction of sand and gravel 
+K. capital dredging as areas
+L. "
+M. capital dredging as points 25m
+N. capital dredging as points 50m
+
+- divide into loss and disturbance
+- assign MOP to pressure layers
+- union first pressure layer with biotopes and calculate impact
+- union every other layer with previous result and calculate impact
+- calculate cumulative impact
