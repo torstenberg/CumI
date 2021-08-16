@@ -26,13 +26,17 @@ render("CumI-assessment.Rmd")
 The R code uses the following libraries which should be installed first (if not present):
 
 ```{r}
+n1 <- Sys.time()
+print(paste("--- CumI ---: starting at",n1,sep=" "))
 print("--- CumI ---: loading libraries ...")
 library(dplyr)
-library(plyr) # provides: rbind.fill
+library(plyr) # provides: rbind.fill()
 # library(naniar)
 # library(stringr)
 library(tibble)
 library(sf)
+library(sp) # used by 'raster'
+library(raster) # provides: raster::union()
 ```
 
 # Some R functions
@@ -43,7 +47,7 @@ print("--- CumI ---: defining some R functions ...")
 
 ## General GIS-related functions
 
-R has no function corresponding to a union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code ist from [stackowerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
+R has no function corresponding to a true union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code ist from [stackowerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
 
 ```{r eval=FALSE}
 a1 <- st_polygon(list(rbind(c(0, 10), c(45, 10), c(45, 90), c(0, 90), c(0, 10))))
@@ -80,7 +84,7 @@ union <- rbind(op11, op22, op3)
 From this, we can make a union function that can work with arbitrary sf objects:
 
 ```{r}
-my_union <- function(a,b) {
+my_union_sf <- function(a,b) {
    #
    # function doing a real GIS union operation such as in QGIS or ArcGIS
    #
@@ -97,23 +101,49 @@ my_union <- function(a,b) {
 }
 ```
 
-If a recent version of QGIS is present (version 3.14.16 or newer), we can also utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This can increase the performance:
+Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some trnasforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
 
-```{r eval=FALSE}
+```{r}
+my_union_raster <- function(a,b,sf=TRUE) {
+   #
+   # function doing a real GIS union operation such as in QGIS or ArcGIS
+   # on Spatial* objects (from the sp library)
+   #
+   # a - the first sf or Spatial* object
+   # b - the second sf or Spatial* object
+   # sf - whehter or not to convert the output to an sf object
+   #
+   # when an objects is not a Spatial* object, it will be converted first
+   #
+   if (! class(a)[1] == "SpatialPolygonsDataFrame") {a <- as_Spatial(a)}
+   if (! class(b)[1] == "SpatialPolygonsDataFrame") {b <- as_Spatial(b)}
+   res <- raster::union(a,b)
+   if (sf) {return(as(res,"sf"))} else {return(res)}
+}
+```
+
+Unfortunately, also this function turns out to be quite slow ...
+
+If a recent version of QGIS is present (version 3.14.16 or newer), we therefor should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
+
+```{r}
 # needs QGIS 3.14.16
 library(qgisprocess)
 
-my_union_qgis <- function(a,b) {
+my_union <- function(a,b) {
+   st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
+   st_agr(b) = "constant"
    result <- qgis_run_algorithm(
       "native:union",
 	   INPUT = a,
 	   OVERLAY = b,
-	   OVERLAY_FIELDS_PREFIX = 'new_')
-   combinedReefLayer <- sf::read_sf(qgis_output(result, "OUTPUT"))
+	   OVERLAY_FIELDS_PREFIX = '')
+   result <- sf::read_sf(qgis_output(result, "OUTPUT"))
 }
 ```
 
-There is, however, one difference. The QGIS function prefixes the columns of the overlayed data with the string "new_". This can be switched off, if needed.
+If you can't use QGIS, you will need to rename one of the first two union functions to `my_union` (and rename the QGIS function to something else) and live with a very poor performance, meaning to wait hours and hours for some GIS union processing (I don't even know how long it takes because I always stopped the execution after 1–2 hours).
+
 
 Sometimes, we need to rename the geometry column of an sf object, since sf itself will give them some weird names:
 
@@ -168,7 +198,7 @@ cumi_sensi <- function(resistance,resilience) {
    # filter out the right row, seect the the right column there and isolate the value
    cumi_sensi_matrix %>%
       filter(resistance==res) %>%
-      select(all_of(myCol)) %>%
+      dplyr::select(all_of(myCol)) %>%
       pull()
 }
 ```
@@ -204,18 +234,22 @@ cumi_impact <- function(MOP,sensitivity) {
    # MOP - MOP category as one of the names in cumi_impact_matrix_MOP_columns
    # sensitivity - sensitivity category as one of the names in cumi_impact_matrix_MOP_columns
    #
+   if (is.na(MOP)) {return("none")}
+   if (MOP == "loss") {return("loss")}
    if (! MOP %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
    if (! sensitivity %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
    sens <- sensitivity # since 'get()' doesn't seem to work in the filter down below ...
    myMopCol <- unname(cumi_impact_matrix_MOP_columns[MOP])
    cumi_impact_matrix %>%
       filter(sensitivity==sens) %>%
-      select(all_of(myMopCol)) %>%
+      dplyr::select(all_of(myMopCol)) %>%
       pull()
 }
 ```
 
-Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. The buffer distances are radius values and always count from the outer edge of the footprint.
+Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. So, the number in a specific columns is always the radius of the outer border of a zone, not its width.
+
+The table also lists whether there is a buffer zone counting as 'loss' (~buffer_loss) and whether the pressure footprint itself (in case of polygone data) is treated as loss (~footprint\_as\_loss).
 
 ```{r}
 #
@@ -225,25 +259,33 @@ Some of the pressures work with a buffering. This means, the pressure is acting 
 #   C = under construction
 #   O = in operation
 #   M = maintenance
-#   OWP = offshore wind park
+#   CAP1, CAP2 = capital
+#   OWF = offshore wind farm
 #
 cumi_buffers <- tribble(
-   ~pressure,      ~description,                  ~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,   ~buffer_verylow,
-   #--------------|------------------------------|--------------|-------------|-----------------|--------------|----------------|
-   "extraction",   "sand and gravel extraction",  -1,            50,           100,              250,           500,
-   "depositing",   "deposit of dredged material", -1,            50,           100,              250,           500,
-   "dredging M",   "maintenance dredging",        -1,            50,           100,              250,           500,
-   "cable C",      "cable",                       -1,             0,           550,              600,          1000,
-   "cable O",      "cable",                        1.5,           0,             0,                0,             0,
-   "pipelines C",  "pipelines",                   -1,             0,           550,              600,          1000,
-   "pipelines O",  "pipelines",                   -1,             0,             0,               75,           300, 
-   "platforms C",  "platforms",                   -1,             0,           550,              600,          1000,
-   "OWP C",        "OWP under construction",      -1,             0,           550,              600,          1000,
-   "OWP O",        "OWP under construction",      -1,             0,            10,               20,           100,
-   "coastalDef C", "coastal defence",             -1,            50,           100,              250,           500,
-   "mariculture",  "mariculture",                 -1,             0,           250,              500,          1000,
+   ~pressure,      ~description,                  ~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,   ~buffer_verylow,  ~footprint_as_loss,
+   #--------------|------------------------------|--------------|-------------|-----------------|--------------|------------------|------------------
+   "extraction",   "sand and gravel extraction",  0,             50,           100,              250,           500,                1,
+   "depositing",   "deposit of dredged material", 0,             50,           100,              250,           500,               NA,
+   "dredging M",   "maintenance dredging",        0,             50,           100,              250,           500,               NA,
+   "dredging CAP1","capital dredging <= 5000m3", 25,             25,            25,               25,            25,                1,
+   "dredging CAP2","capital dredging > 5000m3",  50,             50,            50,               50,            50,                1,
+   "cable C",      "cable",                       0,              0,           550,              600,          1000,                0,
+   "cable O",      "cable",                       1.5,            1.5,           1.5,              1.5,           1.5,              0,
+   "pipeline C",   "pipelines",                   0,              0,           550,              600,          1000,                0,
+   "pipeline O",   "pipelines",                  15,             15,            15,               90,           315,                0,
+   "platform C",   "platforms",                   0,              0,           550,              600,          1000,                0,
+   "platform O",   "platforms",                  25,             25,            25,               25,            25,                0,
+   "OWF C",        "offshore wind farms",         0,              0,           550,              600,          1000,                0,
+   "OWF O",        "offshore wind farms",        30,             30,            40,               50,           130,                0,
+   "coastalDef C", "coastal defence",             0,             50,           100,              250,           500,                0,
+   "coastalDef O", "coastal defense",            50,             50,            50,               50,            50,                0,
+   "mariculture",  "mariculture",               150,            150,           400,              650,          1150,               NA,
+   "harbour O",    "harbour",                   200,              0,             0,                0,             0,               NA
 )
 ```
+
+- capital dreding: area of loss depends on dredged amount
 
 Shipping uses a specific model where the intensity decreases with water depth. Up to a certain water depth (~depth) the intensity (which is 100 % at 0 metres water depth) will decrease by a certain factor leaving a fraction of the intensity (~factor) until the next depth category:
 
@@ -262,16 +304,22 @@ The following function uses the above buffer models to calculate the concrete sp
 ```{r}
 cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	#
+	# build an sf object that holds all different intensity zones and a loss zone
+	# for a specific pressure
+	#
 	# pressureData - the sf objects holding the raw pressure data as points, lines or polygons
 	# pressureBufferModel - the symbolic name of the buffer model in the tribble 'cumi_buffer'
 	#   (column ~pressure)
 	#
 	
-	vl <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_verylow"]]
-	l  <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_low"]]
-	m  <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
-	h  <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
+	footprint <- filter(cumi_buffers,pressure==pressureBufferModel)[["footprint_as_loss"]]
+	loss <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_loss"]]
+	vl   <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_verylow"]]
+	l    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_low"]]
+	m    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
+	h    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
 	
+	# 'very low' zone:
 	if (vl-l > 0) {
 	   b_verylow <- st_buffer(pressureData,vl)
 	   b_low <- st_buffer(pressureData,l)
@@ -280,6 +328,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   output <- zone_verylow
 	}
 	
+	# 'low' zone:
 	if (l-m > 0) {
 	   if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
 	   b_moderate <- st_buffer(pressureData,m)
@@ -292,6 +341,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   }
 	}
 	
+	# 'moderate' zone:
 	if (m-h > 0) {
 	   if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
 	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
@@ -304,16 +354,88 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   }
 	}
 	
-	if (h > 0) {
+	# 'high' zone:
+	if (h-loss > 0) {
 	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
-	   zone_high <- st_sf(st_union(b_high)) %>% mutate(int="high") %>% rename_geometry("geometry")
+	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+	   zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss))) %>%
+		  st_cast("POLYGON") %>% mutate(int="high") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_high)
 	   } else {
 		  output <- zone_high
 	   }
 	}
+	
+	# 'loss' zone:
+	if (loss > 0) {
+	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+	   zone_loss <- st_sf(st_union(b_loss)) %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	   if (exists("output")) {
+		  output <- add_row(output,zone_loss)
+	   } else {
+		  output <- zone_loss
+	   }
+	}
+	
+	# footprint zone as 'loss':
+	if (footprint) {
+	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	   if (exists("output")) {
+		  output <- add_row(output,zone_footprint)
+	   } else {
+		  output <- st_union(zone_footprint)
+	   }
+	}
+	
 	return(output)
+}
+```
+
+In order to make the script a bit more concise, a function combining some standard steps into one go is used. It reads the opened pressure GIS layer, assuming it is having a valid geometry/topology and the correct coordinate system, applies the buffer model, clips the resulting layer at the boudary of the biotope layer, includes it into the final impact layer and calculates the impact (and deletes the now superfluous 'int' column):
+
+
+```{r}
+cumi_process_pressure <- function(my_sf,type,column) {
+   #
+   # apply a buffer model to a GIS layer with pressures
+   # clip at biotope boundary ind combine with partial impact layer
+   #
+   # The function uses the global `impact_map` sf layer to add the pressure
+   # Therefor, the output of this function should be assigned to `imapct_map` again
+   #
+   # my_sf - sf layer with pressure data
+   # type - layer type from tribble `cumi_buffers`, column ~pressure
+   # column - column name to be filled with the calculated impacts
+   #
+   # mapply() needed in mutate() function since mutate() operates on vectors and the cumi_impact() function not.
+   # Also, unname() needed in mutate() function since mapply() will return a named object and we only the vector inside.
+   # We need the namespace identifier in mutate() and select() as otherwise the plyr functions are called.
+   # Also note, from here on we typically need to repeatedly cast impact_map to MULTIPOLYGON as otherwise
+   #    we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
+   #    an issue)" which comes from the first st_difference() in my_union()
+   #
+   int_layer <- cumi_buffer_intensity(my_sf,type) %>% st_intersection(clipLayer)
+   res <- st_cast(impact_map,"MULTIPOLYGON") %>% 
+      my_union(int_layer) %>% 
+      dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,int,sens))) %>% 
+      dplyr::select(-int)
+   return(res)
+}
+```
+
+Last, and not least, we want some regular feedback from the script, since some of the operations (especially the GIS union) are taking some time:
+
+
+```{r}
+cumi_message <- function(msg) {
+   #
+   # print some nice, friendly message
+   #
+   # msg - text of the message to print
+   #
+   msg <- paste("--- CumI ---:",msg,sep=" ")
+   cat(paste(" ",msg," "," ",sep="\n"))
 }
 ```
 
@@ -323,7 +445,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe":
 
 ```{r}
-print("--- CumI ---: setting up the assessment ...")
+cumi_message("setting up the assessment ...")
 coordSystem <- 3035
 ```
 
@@ -348,26 +470,26 @@ The data file has three different sensitivity columns:
 - s_subsurf = sensitivity against subsurface penetration due to bottom trawling (not used in this assessment)
 
 ```{r}
-print("--- CumI ---: preparing biotope layer ...")
+cumi_message("preparing biotope layer ...")
 biotope_file <- "Data/Biotopes/biotopes.shp"
 # this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
 # in order to prevent errors in later spatial operations
-biotopeLayer <- st_read(biotope_file) %>% st_transform(coordSystem) %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
+biotopeLayer <- st_read(biotope_file) %>% st_transform(coordSystem) %>% st_cast("MULTIPOLYGON") %>% select(-s_subsurf) %>% st_make_valid()
 ```
 
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
 ```{r}
-clipLayer <- select(biotopeLayer,-c(Biotope,sens,s_surf,s_subsurf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,s_subsurf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
 ```
 
-## Prepare pressure data for disturbance
-The initial impact map is just the biotope layer. This impact map gets combined (via a union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_n' where n is a number corresponding to the numbers in the following secions.
+## Pressure data and impact calculation
+The initial impact map is just the biotope layer. This impact map gets combined (in principe via a GIS union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_nx' where n is a number corresponding to the numbers in the following secions and x is either 'c' for 'under construction' or 'o' for 'in operation' or it is empty for those pressures which cannot be divided into these categories.
 
 The assessment period is: 2011–2016.
 
 ```{r}
-print("--- CumI ---: preparing impact layer ...")
+cumi_message("preparing impact layer ...")
 # initial impact layer is just the biotope map:
 impact_map <- biotopeLayer
 ```
@@ -376,104 +498,197 @@ impact_map <- biotopeLayer
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Cables](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=c0e73e71-cafb-4422-a3a3-115687fd5c49&fname=Cables.zip&access=public), last accessed 2021-08-09.
 
 ```{r}
-print("--- CumI ---: processing cables under construction ...")
+cumi_message("processing cables under construction ...")
 # remove z-coord and take the features with status="Under construction":
-cable_c_file <- "Data/Cables/Cables.shp"
-cable_c <- st_read(cable_c_file) %>% st_zm() %>% filter(Status == 'Under construction')
+cable_file <- "Data/Cables/Cables.shp"
+cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construction')
 
-# Buffer intensity with buffer model "cable C":
-cable_c_intensity <- cumi_buffer_intensity(cable_c,"cable C")
 
-# In this case, MOP is the same as intensity as frequency does not apply
-# (there is only one construction event)
+# In this case, MOP is the same as intensity as frequency does not apply:
+# (we need the namespace identifier in rename as otherwise plyr::rename is called)
+impact_map <- cumi_process_pressure(cable_c,"cable C",impact_1c)
 
-# clip at biotope map boundary:
-cable_c_intensity <- st_intersection(cable_c_intensity,clipLayer)
 
-# combine with biotopes and calculate impact:
-# (mapply needed in mutate function since mutate operates on vectors and the cumi_impact function not)
-# (also, unname needed in mutate function since mapply will return a named object and we only the vector inside)
-impact_map <- my_union(impact_map,cable_c_intensity) %>% mutate(impact_1 = unname(mapply(cumi_impact,int,sens))) %>% select(-int)
 
+
+
+cumi_message("processing cables in operation ...")
+# remove z-coord and take the features with status="Operational":
+cable_o <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Operational')
+
+# In this case, MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(cable_o,"cable O",impact_1o)
 ```
 
-### 2. coastal defense under construction
+
+### 2. Coastal defense
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=2d47c5ea-4590-465f-a462-60ef59d3d7d3&fname=Coastal_defense.zip&access=public), last accessed 2021-08-12.
 
-The data has an attribute 'Estimated' containg some years from the assessment period. It is not clear whether this means hte objects were fconstructed earlier and finalised in the assessment period. Thus, only the objects havong 'Const_year="Under construction"' are currently used.
+These are the interesting attributes in the data (description taken from HECLOM metadata page on this dataset):
+
+- Const\_year: Year of construction; for some structure in Estonia the construction year is not known and this is marked as no data (ND)
+- Estimated: Estimated date of completion if under construction (Estonia) or the year of environmental permit if year of construction is lacking (Finland)
+- Out\_of\_use: Year when costal defence structure has been taken out of use
+
+
+The data has an attribute 'Estimated' containg some years from the assessment period. It is not clear whether this means the objects were constructed earlier and finalised in the assessment period. Thus, only the objects having 'Const_year="Under construction"' are currently used.
 
 ```{r}
-print("--- CumI ---: processing coastal defense under construction ...")
-# remove z-coord and take the features with status="Under construction":
-coastalDef_c_file <- "Data/Coastal_defense/Coastal_defense.shp"
-coastalDef_c <- st_read(coastalDef_c_file) %>% st_transform(coordSystem) %>% filter(Const_year == 'Under construction')
-
-# Buffer intensity with buffer model "coastalDef C":
-coastalDef_c_intensity <- cumi_buffer_intensity(coastalDef_c,"coastalDef C")
+cumi_message("processing coastal defense under construction ...")
+# take the features with Const_year="Under construction":
+coastalDef_file <- "Data/Coastal_defense/Coastal_defense.shp"
+coastalDef_c <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% filter(Const_year == 'Under construction')
 
 # In this case, MOP is the same as intensity as frequency does not apply
 # (there is only one construction event)
+impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C",impact_2c)
 
-# clip at biotope map boundary:
-coastalDef_c_intensity <- st_intersection(coastalDef_c_intensity,clipLayer)
 
-# combine with biotopes and calculate impact:
-# (mapply needed in mutate function since mutate operates on vectors and the cumi_impact function not)
-# (also, unname needed in mutate function since mapply will return a named object and we only the vector inside)
-impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% my_union(coastalDef_c_intensity) %>% mutate(impact_2 = unname(mapply(cumi_impact,int,sens))) %>% select(-int)
+
+
+cumi_message("processing coastal defense in operation ...")
+# take the features where Const_year is null or is a 4-digit year or is 'ND':
+coastalDef_o <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% 
+	   filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
+
+# In this case, MOP is the same as intensity as frequency does not apply
+impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O",impact_2o)
+```
+
+### 3. Pipelines
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Pipelines](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=5260249e-5850-431a-b130-3a096abac852&fname=Pipelines.zip&access=public), last accessed 2021-08-13.
+
+
+There are no pipelines under construction in the dataset (attribute column 'Status'), thus only operational pipelines are included in the current assessment.
+
+```{r}
+cumi_message("processing pipelines in operation ...")
+pipeline_file <- "Data/Pipelines/Pipelines.shp"
+pipeline_o <- st_read(pipeline_file) %>% filter(Status %in% (c('Operational','Unknown')))
+
+# In this case, MOP is the same as intensity as frequency does not apply
+impact_map <- cumi_process_pressure(pipeline_o,"pipeline O",impact_3o)
 
 ```
 
-### 3. pipelines 300m
+### 4. Offshore wind farms
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Wind farms](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=80de3bc3-e3ec-474e-8ae8-4b29c205eb0a&fname=wind_turbines.zip&access=public), last accessed 2021-08-13.
 
 
-### 4. OWP in operation 100m (loss)
+The 'Status' attribute lists some turbines 'Under construction' and some as 'Generating power'. The latter are taken as 'in operation'. Turbines with status 'Transformer' are not strictly turbines but transformer station. As there are only three of them in the dataset, they are also interpreted as being 'in operation' and treated as regular turbines. It can be considered to treat them differently in the future. According to ICES WKBEDLOSS, a radius of 15 m could be used for "offshore transformer stations or modules" (OTS/OTM).
 
-### 5. OWP under construction 1000m
+```{r}
+cumi_message("processing OWF under construction ...")
+owf_file <- "Data/Wind_turbines/wind_turbines.shp"
+owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
+
+# In this case, MOP is the same as intensity as frequency does not apply
+impact_map <- cumi_process_pressure(owf_c,"OWF C",impact_4c)
+
+
+
+cumi_message("processing OWF in operation ...")
+owf_o <- st_read(owf_file) %>% filter(Status %in% (c('Generating power','Transformer')))
+
+# In this case, MOP is the same as intensity as frequency does not apply
+impact_map <- cumi_process_pressure(owf_o,"OWF O",impact_4o)
+
+```
+
 
 ### 6. fishery (from ICES SAR numbers) [a = surface, b = subsurface]
 
 ### 7. mariculure with finfish 1000m (loss)
 
 ### 8. mariculture with shellfish 1000m (loss)
+D. mariculture with finfish 150m
+E. mariculture with shellfish as points 150m
+F. mariculture with shellfish as areas 
 
-### 9. extraction of gravel and sand 500m (loss)
-Loss for the area of the polygons in the data
+### 9. Extraction of gravel and sand
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=683224c3-2fb9-4f2f-b748-bf5ad712d708&fname=Extraction_of_sand_and_gravel.zip&access=public), last accessed 2021-08-16.
+
+The data are represented as polygons. Since the extraction depth and the spatial extent of the extraction within the polygon is unknown, the complete polygon area is currently treated as loss. All listed sites are assumed active or at least disturbed as the expire dates (attribute column 'expire_yea') are either not specified or not before the start of the assessment period.
+
+We still ignore inactive sites in the script stopping before the assessment period, as a place holder for future settings, although this has no effect in the current assessment.
+
+Frequency cannot be evaluated from this dataset as it is unclear whether the data are complete and values for the extraction amount of zero just are confidential data, missing data or a real non-pressure in a specific year.
+
+```{r}
+cumi_message("processing of sand/gravel extraction ...")
+extraction_file <- "Data/Extraction_of_sand_and_gravel/Extraction_of_sand_and_gravel.shp"
+extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 || expire_yea < 2011)
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(extraction_x,"extraction",impact_9)
+
+```
 
 
 ### 10. deposition areas 500m
-
 ### 11. deposition points 500m
 
-### 12. dredged areas 500m
 
+
+### 12. dredged areas 500m
 ### 13. dredging points 500m
+M. capital dredging as points 25m
+N. capital dredging as points 50m
+
+- Trennung in ‚capital‘ und ‚maintenance‘
+	- nur eindeutige zu ‚capital‘ sortiert (Mengen < 5000 m3 mit 25 m gepuffert, > 5000 m3 mit 50 m gepuffert, Zuordnung Verlust)
+	- maintenance: leere Felder, Namensangaben der Standorte und finnische Bezeichnungen sowie klare ‚maintenance‘ Angaben (Puffermodell ‚ puffer-v3-deposit.modell3‘ 500 m, Zuordnung Störung)
+
+
+- Trennung zwischen Punkt- und Polygondaten
+
+```{r}
+cumi_message("processing of capital dredging (polygon data) ...")
+dredging_file <- "Data/....shp"
+dredging_cap1 <- st_read(dredging_file) %>% filter(<AMOUNT> <= 5000)
+
+# In this case, MOP is the same as intensity as frequency is ignored:
+impact_map <- cumi_process_pressure(dredging_cap1,"dredging CAP1",impact_13cap1)
+
+dredging_cap2 <- st_read(dredging_file) %>% filter(<AMOUNT> > 5000)
+# In this case, MOP is the same as intensity as frequency is ignored:
+impact_map <- cumi_process_pressure(dredging_cap2,"dredging CAP2",impact_13cap2)
+
+
+
+cumi_message("processing of maintenance dredging (point data) ...")
+dredging_m <- st_read(dredging_file) %>% filter(...)
+# ...
+
+```
 
 ### 14. shipping
 
 - prepare pressure data for loss:
-A. cables in operation 1.5m
-B. coastal defense 50m
 C. harbours 200m
-D. mariculture with finfish 150m
-E. mariculture with shellfish as points 150m
-F. mariculture with shellfish as areas 
+
 G. oil platforms 25m2
-H. pipelines 15m
+
 I. OWP in operation 30m
 J. extraction of sand and gravel 
 K. capital dredging as areas
 L. "
-M. capital dredging as points 25m
-N. capital dredging as points 50m
+
+## Calculate cumulative impact
+cumi_message("Cumulating all impacts ...")
+- splitting loss from disturbance
 
 
+```{r}
+n2 <- Sys.time()
+cumi_message("Finished assesment!")
+print(n2)
+n <- format((as.numeric(n2)-as.numeric(n1))/60, digits=1,decimal.mark=".")
+print(paste("Total assessment processing time:",n,"minutes",sep=" "))
+```
 
-- divide into loss and disturbance
-- assign MOP to pressure layers
-- union first pressure layer with biotopes and calculate impact
-- union every other layer with previous result and calculate impact
-- calculate cumulative impact
+
+# Random notes and testing code
 
 ```{r eval=FALSE}
 #
@@ -487,4 +702,7 @@ i1 <- st_read(impact1)
 i2 <- st_read(impact2)
 
 i_1_2 <- my_union(i1,i2)
+
+
+
 ```
