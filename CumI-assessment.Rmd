@@ -31,7 +31,7 @@ print(paste("--- CumI ---: starting at",n1,sep=" "))
 print("--- CumI ---: loading libraries ...")
 library(dplyr)
 # library(naniar)
-# library(stringr)
+library(stringr) # using str_detect
 library(tibble)
 library(sf)
 
@@ -269,10 +269,11 @@ cumi_buffers <- tribble(
    ~pressure,      ~description,                  ~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,   ~buffer_verylow,  ~footprint_as_loss,
    #--------------|------------------------------|--------------|-------------|-----------------|--------------|------------------|------------------
    "extraction",   "sand and gravel extraction",  0,             50,           100,              250,           500,                1,
-   "depositing",   "deposit of dredged material", 0,             50,           100,              250,           500,               NA,
-   "dredging M",   "maintenance dredging",        0,             50,           100,              250,           500,               NA,
-   "dredging CAP1","capital dredging <= 5000m3", 25,             25,            25,               25,            25,                1,
-   "dredging CAP2","capital dredging > 5000m3",  50,             50,            50,               50,            50,                1,
+   "depositing",   "deposit of dredged material", 0,             50,           100,              250,           500,                0,
+   "dredging M",   "maintenance dredging",        0,             50,           100,              250,           500,                0,
+   "dredging CAP", "capital, areas",              0,              0,             0,                0,             0,                1,
+   "dredging CAP1","captial, points, <= 5000m3", 25,             25,            25,               25,            25,                1,
+   "dredging CAP2","capital, points, > 5000m3",  50,             50,            50,               50,            50,                1,
    "cable C",      "cable",                       0,              0,           550,              600,          1000,                0,
    "cable O",      "cable",                       1.5,            1.5,           1.5,              1.5,           1.5,              0,
    "pipeline C",   "pipelines",                   0,              0,           550,              600,          1000,                0,
@@ -283,12 +284,11 @@ cumi_buffers <- tribble(
    "OWF O",        "offshore wind farms",        30,             30,            40,               50,           130,                0,
    "coastalDef C", "coastal defence",             0,             50,           100,              250,           500,                0,
    "coastalDef O", "coastal defense",            50,             50,            50,               50,            50,                0,
-   "mariculture",  "mariculture",               150,            150,           400,              650,          1150,               NA,
+   "mariculture",  "mariculture",               150,            150,           400,              650,          1150,                1,
    "harbour O",    "harbour",                   200,              0,             0,                0,             0,                0
 )
 ```
 
-- capital dreding: area of loss depends on dredged amount
 
 Shipping uses a specific model where the intensity decreases with water depth. Up to a certain water depth (~depth) the intensity (which is 100 % at 0 metres water depth) will decrease by a certain factor leaving a fraction of the intensity (~factor) until the next depth category:
 
@@ -373,7 +373,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	# 'loss' zone:
 	if (loss > 0) {
 	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
-	   zone_loss <- st_sf(st_union(b_loss)) %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	   zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_loss)
 	   } else {
@@ -382,12 +382,12 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	}
 	
 	# footprint zone as 'loss':
-	if (footprint) {
-	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
+	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_footprint)
 	   } else {
-		  output <- st_union(zone_footprint)
+		  output <- zone_footprint
 	   }
 	}
 	
@@ -499,56 +499,115 @@ impact_map <- biotopeLayer
 
 ### Bottom trawling fishery
 #### 6. fishery (from ICES SAR numbers) [a = surface, b = subsurface]
-The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. The next version of the script will also contain the necessary steps to make the preprocessing.
+The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. *The next version of the script will also contain the necessary steps to make the preprocessing.*
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
 ```{r eval=FALSE}
-fishing_file <- "Data/..."
-fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
-
-# treat SAR vlues lower than 0.05 as zero:
-foreach (myColumn in c('2011',...,'2016')) {
-   fishing_x <- fishing_x %>% ...ifelse( myVar >=0.05,1,0)
+#
+# As this is the first pressure and it takes veeery looong to be calculated (approx. 7 hours on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure,
+# we here provide a pre-calculated file, based on the first part of the script up to here.
+# You can choose to either use the pre-calculated one (TRUE) for the further process, or re-calculate (FALSE) it here.
+#
+get_pre_calculated_data <- TRUE
+#
+# You might even want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS.
+#
+cumi_message("processing of bottom trawling fishery ...")
+if (get_pre_calculated_data) {
+	cumi_message("... using pre_calculated data ...")
+	fishing_file_pre <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf_pre_calculated.shp"
+	if (! file.exists(fishing_file_pre)) {
+		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
+	} else {
+		impact_map <- st_read(fishing_file_pre)
+	}
+} else {
+	cumi_message("... calculating fishery impact - this will take a lot of time ...")
+	fishing_file <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf.shp"
+	fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
+	
+	# treat SAR values lower than 0.05 as zero intensity:
+	for (myColumn in c('SURFSAR_11','SURFSAR_12','SURFSAR_13','SURFSAR_14','SURFSAR_15','SURFSAR_16')) {
+	   fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
+	}
+	
+	# convert SAR into MOP:
+	fishing_x <- fishing_x %>% mutate(sar_avg = (SURFSAR_11 + SURFSAR_12 + SURFSAR_13 + SURFSAR_14 + SURFSAR_15 + SURFSAR_16)/6) %>%
+	   mutate(MOP = case_when(
+	   sar_avg == 0                     ~ 'none',
+	   sar_avg  > 0    & sar_avg < 0.33 ~ 'very low',
+	   sar_avg >= 0.33 & sar_avg < 0.66 ~ 'low',
+	   sar_avg >= 0.66 & sar_avg < 2    ~ 'moderate',
+	   sar_avg >= 2                     ~ 'high',
+	   TRUE                             ~ 'undefined'
+	))
+	fishing_x <- fishing_x %>% dplyr::select(-c(ET_ID,H_sub_code,H_sub_name,location,SURFSAR_11,SURFSAR_12,SURFSAR_13,SURFSAR_14,SURFSAR_15,SURFSAR_16,sar_avg,int))
+	
+	# the my_union() in the following line is what takes 99.9% of the time in this pressure:
+	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x) %>% dplyr::mutate(impact_6 = unname(mapply(cumi_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
 }
-
-# hier SAR in MOP umwandeln
-fishing_x <- fishing_x %>%  mutate(sar_avg = sum(...)/6) %>% mutate(fishing_x,int= case_when(
-   sar_avg < 0.33 ~ 'very low',
-   sar_avg < 0.66 ~ 'low',
-   sar_avg < 2 ~ 'moderate',
-   TRUE < 'high'
-))
-
-impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x) %>% dplyr::mutate(impact_6 = unname(mapply(cumi_impact,int,sens))) %>% dplyr::select(-int)
 
 ```
 
-### Mariculture
+### 7. Mariculture
 
-#### 7. mariculure with finfish 1000m (loss)
-D. mariculture with finfish 150m
+```{r}
+cumi_message("processing of mariculture ...")
+```
 
-•	Finfish mariculture: 
-o	Punktdaten mit 150 m gepuffert (Ausmaß 300 m Verlust)
-o	Punktdaten mit Puffermodell gepuffert (puffer-v3-mariculturelin.modell3, beginnend ab 150 m Verlustfläche) 1000m, Differenz zwischen Pufferergebnis und Verlustfläche für die Zuordnung Störung (Ausmaß 2 km mit linearer Abnahme)
-
-
-#### 8. mariculture with shellfish 1000m (loss)
-E. mariculture with shellfish as points 150m
-F. mariculture with shellfish as areas 
-
-•	Shellfish mariculture: 
-o	Polygone direkt als Verlustflächen verwendet, Punktdaten mit 150 m gepuffert (Ausmaß 300 m Verlust)
-o	Punktdaten mit Puffermodell gepuffert (puffer-v3-mariculturelin.modell3, beginnend ab 150 m Verlustfläche) 1000m, Differenz zwischen Pufferergebnis und Verlustfläche für die Zuordnung Störung (Ausmaß 2 km mit linearer Abnahme)
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Finfish mariculture](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=3cfa469a-6a78-4913-b82f-57fd0e7f4dc0&fname=Finfish_mariculture.zip&access=public), last accessed 2021-08-17.
 
 
+These are point data. Some of the points are classified as "on land" and are ignored.
 
-### Extraction and disposal of sediments
-#### 9. Extraction of gravel and sand
-J. extraction of sand and gravel 
+```{r}
+cumi_message("... finfish ...")
+mari_1_file <- "Data/Finfish_mariculture/Finfish_mariculture.shp"
+mari_1 <- st_read(mari_1_file) %>% filter(! str_detect(AREA,'land'))
+
+# In this case, MOP is the same as intensity as frequency is not applicable:
+impact_map <- cumi_process_pressure(mari_1,"mariculture",impact_7A)
+
+```
+
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture points](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=21efdecc-2fd7-4bfb-9832-68c995291bf7&fname=Shellfish_mariculture_points.zip&access=public), last accessed 2021-08-17.
+
+These are point data. All sites are taken into account.
+
+```{r}
+cumi_message("... shellfish (points) ...")
+mari_2_file <- "Data/Shellfish_mariculture_points/Shellfish_mariculture_points.shp"
+mari_2 <- st_read(mari_2_file)
+
+# In this case, MOP is the same as intensity as frequency is not applicable:
+impact_map <- cumi_process_pressure(mari_2,"mariculture",impact_7B)
+
+```
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture areas](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=8fbf946a-18d2-4b24-98ad-1327ba2820a8&fname=Shellfish_mariculture_areas.zip&access=public), last accessed 2021-08-18.
+
+These are polygon data. All sites are taken into account.
+
+```{r}
+cumi_message("... shellfish (areas) ...")
+mari_3_file <- "Data/Shellfish_mariculture_areas/Shellfish_mariculture_areas.shp"
+mari_3 <- st_read(mari_3_file)
+
+# In this case, MOP is the same as intensity as frequency is not applicable:
+impact_map <- cumi_process_pressure(mari_3,"mariculture",impact_7C)
+
+```
+
+### 9. Extraction and disposal of sediments
+
+```{r}
+cumi_message("processing of Extraction and disposal of sediments ...")
+```
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=683224c3-2fb9-4f2f-b748-bf5ad712d708&fname=Extraction_of_sand_and_gravel.zip&access=public), last accessed 2021-08-16.
+
 
 The data are represented as polygons. Since the extraction depth and the spatial extent of the extraction within the polygon is unknown, the complete polygon area is currently treated as loss. All listed sites are assumed active or at least disturbed as the expire dates (attribute column 'expire_yea') are either not specified or not before the start of the assessment period.
 
@@ -556,68 +615,122 @@ We still ignore inactive sites in the script stopping before the assessment peri
 
 Frequency cannot be evaluated from this dataset as it is unclear whether the data are complete and values for the extraction amount of zero just are confidential data, missing data or a real non-pressure in a specific year.
 
-```{r eval=FALSE}
-cumi_message("processing of sand/gravel extraction ...")
+```{r}
+cumi_message("... extraction of sand and gravel ...")
 extraction_file <- "Data/Extraction_of_sand_and_gravel/Extraction_of_sand_and_gravel.shp"
-extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 || expire_yea < 2011)
+extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 | expire_yea > 2010)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(extraction_x,"extraction",impact_9)
+impact_map <- cumi_process_pressure(extraction_x,"extraction",impact_9A)
 
 ```
 
 
-#### 10. deposition areas 500m
-#### 11. deposition points 500m
-•	Puffermodell ‚ puffer-v3-deposit.modell3‘ 500 m, Zuordnung Störung
-•	Die Bearbeitung der Daten erfolgte sowohl für Punktdaten als auch für Polygone (deposit points/deposit areas)
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Deposit of dredged material sites areas 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/0eebe008-aed9-461a-8c85-e7b32bdab822), last accessed 2021-08-19.
+
+
+These are polygon data. All sites are included in the calculation. No loss is included for the footprint as it is unknown to what extent the actual area is being used and typically only a part of the designated area is actively used.
+
+
+```{r}
+cumi_message("... deposit of dredged material (areas) ...")
+deposit_1_file <- "Data/deposit_areas_11_16/deposit_areas_11_16.shp"
+deposit_1 <- st_read(deposit_1_file)
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(deposit_1,"depositing",impact_9B)
+
+```
 
 
 
-#### 12. dredged areas 500m
-#### 13. dredging points 500m
-K. capital dredging as areas
-L. "
-M. capital dredging as points 25m
-N. capital dredging as points 50m
-
-- Trennung in ‚capital‘ und ‚maintenance‘
-	- nur eindeutige zu ‚capital‘ sortiert (Mengen < 5000 m3 mit 25 m gepuffert, > 5000 m3 mit 50 m gepuffert, Zuordnung Verlust)
-	- maintenance: leere Felder, Namensangaben der Standorte und finnische Bezeichnungen sowie klare ‚maintenance‘ Angaben (Puffermodell ‚ puffer-v3-deposit.modell3‘ 500 m, Zuordnung Störung)
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Deposit of dredged material sites points 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/34bf84a1-1f04-40c7-99dd-9b9aff4523ea), last accessed 2021-08-19.
 
 
-- Trennung zwischen Punkt- und Polygondaten
+These are point data. All sites are included in the calculation. No loss is included for the footprint as the size of the footprint is unknown.
 
-```{r eval=FALSE}
-cumi_message("processing of capital dredging (polygon data) ...")
-dredging_file <- "Data/....shp"
-dredging_cap1 <- st_read(dredging_file) %>% filter(<AMOUNT> <= 5000)
 
-# In this case, MOP is the same as intensity as frequency is ignored:
-impact_map <- cumi_process_pressure(dredging_cap1,"dredging CAP1",impact_13cap1)
+```{r}
+cumi_message("... deposit of dredged material (points) ...")
+deposit_2_file <- "Data/deposit_points_11_16/deposit_points_11_16.shp"
+deposit_2 <- st_read(deposit_2_file)
 
-dredging_cap2 <- st_read(dredging_file) %>% filter(<AMOUNT> > 5000)
-# In this case, MOP is the same as intensity as frequency is ignored:
-impact_map <- cumi_process_pressure(dredging_cap2,"dredging CAP2",impact_13cap2)
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(deposit_2,"depositing",impact_9C)
+
+```
 
 
 
-cumi_message("processing of maintenance dredging (point data) ...")
-dredging_m <- st_read(dredging_file) %>% filter(...)
-# ...
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Dredging areas 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/2a0fbdfd-9aef-4d2e-9129-2d1cc3b4943b), last accessed 2021-08-19.
+
+The data layer contains polygon data. The attribute column "DREDGING_A" makes a distinction between maintenance and capital dredging (but there is no specifications as to how these types are distinguished). Further, the dredging type can be 'environmental', 'x' or empty. As a good definition is missing, only sites marked specifically as capital dredging are treated as such. All other sites are treated as maintenance dredging.
+
+```{r}
+cumi_message("... capital dredging (areas) ...")
+dredge_a_file <- "Data/Dredging_areas/Dredging_areas.shp"
+dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A=="capital")
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(dredge_1,"dredging CAP",impact_9D)
+
+
+cumi_message("... maintenance dredging (areas) ...")
+dredge_2 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A != "capital")
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(dredge_2,"dredging M",impact_9E)
+
+```
+
+
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Dredging points 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/bb6622b7-e5df-4637-8ebe-c2736e705a70), last accessed 2021-08-19.
+
+The data layer contains point data. The attribute column "TYPE" makes a distinction between maintenance and capital dredging (but there is no specifications as to how these types are distinguished). Further, this attribute column contains many values that are not covered by the metadata specification. As a good definition is missing, only sites marked specifically as 'capital' or 'Capital' dredging in the "TYPE" attribute are treated as such. All other sites are treated as maintenance dredging.
+
+The dredged amount is reported in the data as weight in tonnes. The CumI follows the recommendation of HGELCOM EN DREDS and uses an amount in terms of the volume (5,000 m^3^) as threshold between two different buffer models (see `cumi_buffers`). As the volume is not reported, a transformation of the data is needed. The density of sediments varies roughly between 1.1 and 2.5 g/cm^3^. Since the type of the dredged material is unknown, we here use an average density of 1.8 g/cm^3^.
+
+Further, the dredged amount is not reported in all instances. When the amount is not known, it is assumed to be below 5000 m^3^.
+
+
+```{r}
+cumi_message("... capital dredging (points) ...")
+dredge_p_file <- "Data/Dredg_points/Dredg_points.shp"
+dredge_3 <- st_read(dredge_p_file) %>% filter(Type %in% c("capital","Capital"))
+
+# the 'Amount_ton' column is a character type with commas, so produce a proper 'volume' column:
+dredge_3 <- dredge_3 %>% mutate(volume = as.numeric(sub(",",".",Amount_ton))/1.8)
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+# above 5000m3:
+impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2",impact_9F)
+# below or equal to 5000m3:
+impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1",impact_9G)
+
+
+
+cumi_message("... maintenance dredging (points) ...")
+dredge_4 <- st_read(dredge_p_file) %>% filter(! Type %in% c("capital","Capital"))
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(dredge_4,"dredging M",impact_9H)
 
 ```
 
 
 ### Pipelines and cables
-#### 3. Pipelines
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Pipelines](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=5260249e-5850-431a-b130-3a096abac852&fname=Pipelines.zip&access=public), last accessed 2021-08-13.
+```{r}
+cumi_message("processing pipelines and cables ...")
+```
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Pipelines](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/5260249e-5850-431a-b130-3a096abac852), last accessed 2021-08-13.
 
 
 There are no pipelines under construction in the dataset (attribute column 'Status'), thus only operational pipelines are included in the current assessment.
 
 ```{r}
-cumi_message("processing pipelines in operation ...")
+cumi_message("... pipelines in operation (there are none under construction) ...")
 pipeline_file <- "Data/Pipelines/Pipelines.shp"
 pipeline_o <- st_read(pipeline_file) %>% filter(Status %in% (c('Operational','Unknown')))
 
@@ -626,11 +739,11 @@ impact_map <- cumi_process_pressure(pipeline_o,"pipeline O",impact_3o)
 
 ```
 
-#### 1. Cables
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Cables](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=c0e73e71-cafb-4422-a3a3-115687fd5c49&fname=Cables.zip&access=public), last accessed 2021-08-09.
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Cables](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/c0e73e71-cafb-4422-a3a3-115687fd5c49), last accessed 2021-08-09.
 
 ```{r}
-cumi_message("processing cables under construction ...")
+cumi_message("... cables under construction ...")
 # remove z-coord and take the features with status="Under construction":
 cable_file <- "Data/Cables/Cables.shp"
 cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construction')
@@ -642,7 +755,7 @@ impact_map <- cumi_process_pressure(cable_c,"cable C",impact_1c)
 
 
 
-cumi_message("processing cables in operation ...")
+cumi_message("... cables in operation ...")
 # remove z-coord and take the features with status="Operational":
 cable_o <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Operational')
 
@@ -653,19 +766,30 @@ impact_map <- cumi_process_pressure(cable_o,"cable O",impact_1o)
 
 
 ### Platforms and wind farms
-#### G. oil platforms 25m2
-???
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Oil platforms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/fddc27ec-b6ae-407b-9dd8-f31a42d75412), last accessed 2021-08-19.
 
-#### 4. Offshore wind farms
-I. OWP in operation 30m
+As we do not know from the data which kind of fundament the platforms have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss since platforms typically only have pylones and not the entire area of the platform is equivalent to lost habitat area. Further, as not explicitly stated in the metadata, the platforms as assumed to be "in operation".
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Wind farms](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=80de3bc3-e3ec-474e-8ae8-4b29c205eb0a&fname=wind_turbines.zip&access=public), last accessed 2021-08-13.
+```{r}
+cumi_message("... oil platforms ...")
+oil_file <- "Data/Oil_platforms/Oil_platforms.shp"
+oil_x <- st_read(oil_file)
+
+# In this case, MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(oil_x,"platform O",impact_4A)
+```
+
+
+
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Wind farms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/80de3bc3-e3ec-474e-8ae8-4b29c205eb0a), last accessed 2021-08-13.
 
 
 The 'Status' attribute lists some turbines 'Under construction' and some as 'Generating power'. The latter are taken as 'in operation'. Turbines with status 'Transformer' are not strictly turbines but transformer station. As there are only three of them in the dataset, they are also interpreted as being 'in operation' and treated as regular turbines. It can be considered to treat them differently in the future. According to ICES WKBEDLOSS, a radius of 15 m could be used for "offshore transformer stations or modules" (OTS/OTM).
 
+As we do not know from the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss.
+
 ```{r}
-cumi_message("processing OWF under construction ...")
+cumi_message("... OWF under construction ...")
 owf_file <- "Data/Wind_turbines/wind_turbines.shp"
 owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
 
@@ -673,8 +797,7 @@ owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
 impact_map <- cumi_process_pressure(owf_c,"OWF C",impact_4c)
 
 
-
-cumi_message("processing OWF in operation ...")
+cumi_message("... OWF in operation ...")
 owf_o <- st_read(owf_file) %>% filter(Status %in% (c('Generating power','Transformer')))
 # In this case, MOP is the same as intensity as frequency does not apply
 impact_map <- cumi_process_pressure(owf_o,"OWF O",impact_4o)
@@ -773,6 +896,7 @@ i2 <- st_read(impact2)
 
 i_1_2 <- my_union(i1,i2)
 
-
+# get rid of the fid_ columns:
+impact_map <- impact_map %>% select(-contains("fid_"))
 
 ```
