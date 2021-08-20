@@ -141,7 +141,14 @@ my_union <- function(a,b) {
 	   INPUT = a,
 	   OVERLAY = b,
 	   OVERLAY_FIELDS_PREFIX = '')
-   result <- sf::read_sf(qgis_output(result, "OUTPUT"))
+	# read the resulting union, get rid of the produced "fid_" columns and make sure the geometry column is correctly named:
+   result <- sf::read_sf(qgis_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
+   # sometimes, the union results in some MULTILINESTRINGS - we must delete those:
+   if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
+   	cumi_message("... deleting MULTILINESTRINGs from last union ...")
+   	result <- result %>% filter(st_geometry_type() %in% c("POLYGON","MULTIPOLYGON"))
+   }
+   return(result)
 }
 ```
 
@@ -151,12 +158,18 @@ If you can't use QGIS, you will need to rename one of the first two union functi
 Sometimes, we need to rename the geometry column of an sf object, since sf itself will give them some weird names:
 
 ```{r}
-# taken from https://gis.stackexchange.com/questions/386584/sf-geometry-column-naming-differences-r
 rename_geometry <- function(g, name){
-    current = attr(g, "sf_column")
-    names(g)[names(g)==current] = name
-    st_geometry(g)=name
-    g
+	#
+	# rename the geometry columns (sfc) to a user-defined name
+	# (taken from: https://gis.stackexchange.com/questions/386584/sf-geometry-column-naming-differences-r)
+	#
+	# g - sf object to rename the geometry column for
+	# name - the name string to be used for the geometry column
+	#
+	current = attr(g, "sf_column")
+	names(g)[names(g)==current] = name
+	st_geometry(g)=name
+	return(g)
 }
 ```
 
@@ -290,18 +303,6 @@ cumi_buffers <- tribble(
 ```
 
 
-Shipping uses a specific model where the intensity decreases with water depth. Up to a certain water depth (~depth) the intensity (which is 100 % at 0 metres water depth) will decrease by a certain factor leaving a fraction of the intensity (~factor) until the next depth category:
-
-```{r}
-cumi_buffers_shipping <- tribble(
-   ~depth, ~factor,
-   10,     100,
-   15,      50,
-   20,      25,
-   25,      10
-)
-```
-
 The following function uses the above buffer models to calculate the concrete spatial extent of the various intensity zones for a given pressure:
 
 ```{r}
@@ -383,7 +384,8 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	
 	# footprint zone as 'loss':
 	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
-	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
+	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
+	   	st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_footprint)
 	   } else {
@@ -402,7 +404,7 @@ In order to make the script a bit more concise, a function combining some standa
 cumi_process_pressure <- function(pressureData,pressureType,suffix) {
    #
    # apply a buffer model to a GIS layer with pressures,
-   # clip at biotope boundary and combine with partial impact layer
+   # clip at biotope layer boundary and combine with partial impact layer
    #
    # The function uses the global `impact_map` sf layer to add the pressure
    # Therefor, the output of this function should be assigned to `imapct_map` again
@@ -423,10 +425,11 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
    result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
       my_union(intensity_layer) %>% 
       dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,intensity,sens))) %>% 
-      dplyr::select(-int)
+      dplyr::select(-intensity)
    return(result)
 }
 ```
+
 
 Last, and not least, we want some regular feedback from the script, since some of the operations (especially the GIS union) are taking some time:
 
@@ -498,15 +501,22 @@ cumi_message("preparing impact layer ...")
 impact_map <- biotopeLayer
 ```
 
-### Bottom trawling fishery
-The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. *The next version of the script will also contain the necessary steps to make the preprocessing.*
+### 1. Bottom trawling fishery
+
+```{r}
+cumi_message("processing trawling fishery ...")
+```
+
+The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. *The next version of the script will also contain the necessary steps in R to make the preprocessing.*
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
-```{r eval=FALSE}
+```{r}
 #
 # As this is the first pressure and it takes veeery looong to be calculated (approx. 7 hours on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure,
-# we here provide a pre-calculated file, based on the first part of the script up to here.
+# we here provide a pre-calculated file, based on the first part of the script up to here. I.e., the pre-calculated layer
+# already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has
+# the impact from trawling included.
 # You can choose to either use the pre-calculated one (TRUE) for the further process, or re-calculate (FALSE) it here.
 #
 get_pre_calculated_data <- TRUE
@@ -545,12 +555,12 @@ if (get_pre_calculated_data) {
 	fishing_x <- fishing_x %>% dplyr::select(-c(ET_ID,H_sub_code,H_sub_name,location,SURFSAR_11,SURFSAR_12,SURFSAR_13,SURFSAR_14,SURFSAR_15,SURFSAR_16,sar_avg,int))
 	
 	# the my_union() in the following line is what takes 99.9% of the time in this pressure:
-	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x) %>% dplyr::mutate(impact_6 = unname(mapply(cumi_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
+	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x) %>% dplyr::mutate(impact_1 = unname(mapply(cumi_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
 }
 
 ```
 
-### 7. Mariculture
+### 2. Mariculture
 
 ```{r}
 cumi_message("processing of mariculture ...")
@@ -567,7 +577,7 @@ mari_1_file <- "Data/Finfish_mariculture/Finfish_mariculture.shp"
 mari_1 <- st_read(mari_1_file) %>% filter(! str_detect(AREA,'land'))
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_1,"mariculture","7A")
+impact_map <- cumi_process_pressure(mari_1,"mariculture","2A")
 
 ```
 
@@ -582,7 +592,7 @@ mari_2_file <- "Data/Shellfish_mariculture_points/Shellfish_mariculture_points.s
 mari_2 <- st_read(mari_2_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_2,"mariculture","7B")
+impact_map <- cumi_process_pressure(mari_2,"mariculture","2B")
 
 ```
 
@@ -596,14 +606,14 @@ mari_3_file <- "Data/Shellfish_mariculture_areas/Shellfish_mariculture_areas.shp
 mari_3 <- st_read(mari_3_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_3,"mariculture","7C")
+impact_map <- cumi_process_pressure(mari_3,"mariculture","2C")
 
 ```
 
-### 9. Extraction and disposal of sediments
+### 3. Extraction and disposal of sediments
 
 ```{r}
-cumi_message("processing of Extraction and disposal of sediments ...")
+cumi_message("processing extraction and disposal of sediments ...")
 ```
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=683224c3-2fb9-4f2f-b748-bf5ad712d708&fname=Extraction_of_sand_and_gravel.zip&access=public), last accessed 2021-08-16.
@@ -621,7 +631,7 @@ extraction_file <- "Data/Extraction_of_sand_and_gravel/Extraction_of_sand_and_gr
 extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 | expire_yea > 2010)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(extraction_x,"extraction","9A")
+impact_map <- cumi_process_pressure(extraction_x,"extraction","3A")
 
 ```
 
@@ -638,7 +648,7 @@ deposit_1_file <- "Data/deposit_areas_11_16/deposit_areas_11_16.shp"
 deposit_1 <- st_read(deposit_1_file)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(deposit_1,"depositing","9B")
+impact_map <- cumi_process_pressure(deposit_1,"depositing","3B")
 
 ```
 
@@ -656,7 +666,7 @@ deposit_2_file <- "Data/deposit_points_11_16/deposit_points_11_16.shp"
 deposit_2 <- st_read(deposit_2_file)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(deposit_2,"depositing","9C")
+impact_map <- cumi_process_pressure(deposit_2,"depositing","3C")
 
 ```
 
@@ -672,14 +682,14 @@ dredge_a_file <- "Data/Dredging_areas/Dredging_areas.shp"
 dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A=="capital")
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_1,"dredging CAP","9D")
+impact_map <- cumi_process_pressure(dredge_1,"dredging CAP","3D")
 
 
 cumi_message("... maintenance dredging (areas) ...")
 dredge_2 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A != "capital")
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_2,"dredging M","9E")
+impact_map <- cumi_process_pressure(dredge_2,"dredging M","3E")
 
 ```
 
@@ -704,9 +714,9 @@ dredge_3 <- dredge_3 %>% mutate(volume = as.numeric(sub(",",".",Amount_ton))/1.8
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
 # above 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2","9F")
+impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2","3F")
 # below or equal to 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1","9G")
+impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1","3G")
 
 
 
@@ -714,12 +724,13 @@ cumi_message("... maintenance dredging (points) ...")
 dredge_4 <- st_read(dredge_p_file) %>% filter(! Type %in% c("capital","Capital"))
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_4,"dredging M","9H")
+impact_map <- cumi_process_pressure(dredge_4,"dredging M","3H")
 
 ```
 
 
-### Pipelines and cables
+### 4. Pipelines and cables
+
 ```{r}
 cumi_message("processing pipelines and cables ...")
 ```
@@ -735,7 +746,7 @@ pipeline_file <- "Data/Pipelines/Pipelines.shp"
 pipeline_o <- st_read(pipeline_file) %>% filter(Status %in% (c('Operational','Unknown')))
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","3o")
+impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","4A")
 
 ```
 
@@ -751,7 +762,7 @@ cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construct
 
 # In this case, MOP is the same as intensity as frequency does not apply:
 # (we need the namespace identifier in rename as otherwise plyr::rename is called)
-impact_map <- cumi_process_pressure(cable_c,"cable C","1c")
+impact_map <- cumi_process_pressure(cable_c,"cable C","4B")
 
 
 
@@ -760,12 +771,17 @@ cumi_message("... cables in operation ...")
 cable_o <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Operational')
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(cable_o,"cable O","1o")
+impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
 ```
 
 
 
-### Platforms and wind farms
+### 5. Platforms and wind farms
+
+```{r}
+cumi_message("processing platforms and wind farms ...")
+```
+
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Oil platforms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/fddc27ec-b6ae-407b-9dd8-f31a42d75412), last accessed 2021-08-19.
 
 As we do not know from the data which kind of fundament the platforms have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss since platforms typically only have pylones and not the entire area of the platform is equivalent to lost habitat area. Further, as not explicitly stated in the metadata, the platforms as assumed to be "in operation".
@@ -776,7 +792,7 @@ oil_file <- "Data/Oil_platforms/Oil_platforms.shp"
 oil_x <- st_read(oil_file)
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(oil_x,"platform O","4A")
+impact_map <- cumi_process_pressure(oil_x,"platform O","5A")
 ```
 
 
@@ -794,19 +810,23 @@ owf_file <- "Data/Wind_turbines/wind_turbines.shp"
 owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_c,"OWF C","4c")
+impact_map <- cumi_process_pressure(owf_c,"OWF C","5B")
 
 
 cumi_message("... OWF in operation ...")
 owf_o <- st_read(owf_file) %>% filter(Status %in% (c('Generating power','Transformer')))
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_o,"OWF O","4o")
+impact_map <- cumi_process_pressure(owf_o,"OWF O","5C")
 
 ```
 
 
-### Coastal protection
-#### 2. Coastal defense
+### 6. Coastal protection
+
+```{r}
+cumi_message("processing coastal protection ...")
+```
+
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=2d47c5ea-4590-465f-a462-60ef59d3d7d3&fname=Coastal_defense.zip&access=public), last accessed 2021-08-12.
 
 These are the interesting attributes in the data (description taken from HECLOM metadata page on this dataset):
@@ -819,57 +839,147 @@ These are the interesting attributes in the data (description taken from HECLOM 
 The data has an attribute 'Estimated' containg some years from the assessment period. It is not clear whether this means the objects were constructed earlier and finalised in the assessment period. Thus, only the objects having 'Const_year="Under construction"' are currently used.
 
 ```{r}
-cumi_message("processing coastal defense under construction ...")
+cumi_message("... coastal protection under construction ...")
 # take the features with Const_year="Under construction":
 coastalDef_file <- "Data/Coastal_defense/Coastal_defense.shp"
 coastalDef_c <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% filter(Const_year == 'Under construction')
 
-# In this case, MOP is the same as intensity as frequency does not apply
+# In this case, MOP is the same as intensity as frequency does not apply:
 # (there is only one construction event)
-impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C","2c")
+impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C","6A")
 
 
 
-cumi_message("processing coastal defense in operation ...")
+cumi_message("... coastal protection in operation ...")
 # take the features where Const_year is null or is a 4-digit year or is 'ND':
 coastalDef_o <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% 
 	   filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
 
-# In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O","2o")
+# In this case, MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O","6B")
 ```
 
 
-#### C. harbours 200m
-•	Polygondaten mit 200 m gepuffert (Ausmaß 400 m Verlust)
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Harbours](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/e2a3a104-a7aa-49c9-bc2c-47845b3a322f), last accessed 2021-08-20.
+
+This dataset provides harbours as polygons. All harbours are included in the assesment. The dataset also contains point data. These are derived from the polygon data for the estimation of port visits and is not dealt with here.
+
+```{r}
+cumi_message("... harbours (areas) ...")
+harbour_file = "Data/Harbours/Harbour_polygons.shp"
+harbour_o <- st_read(harbour_file)
+
+# In this case, MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(harbour_o,"harbour O","6C")
+```
 
 
+### 7. Shipping
 
-### Shipping
-### 14. shipping
-Data layer from HELCOM:
-- shipping
-- fuel consumption
+```{r}
+cumi_message("processing shipping ...")
+```
 
-```{r eval=FALSE}
-shipping_file <- "..."
-shipping_x <- st_read(shipping_file) %>% ...
-## TODO: build a cumi_shipping_intensity() function after the template of cumi_buffer_intensity()
-int_layer <- cumi_shipping_intensity(my_sf,type) %>% st_intersection(clipLayer)
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Shipping density 2011-2015](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/1fd5298f-d3be-4c5f-bb05-3dc66a8eea6b), last accessed 2021-08-20.
+
+This script uses a pre-processed version of the HELCOM dataset. *The next version of this script will include the pre-processing prodedure in R*. These step were involved in order to arrive at the data layer used here:
+
+1. use the layer "2011-2015_all_ship_types_MEAN/2011-2015_all_ship_types_MEAN.tif" from the above HELCOM dataset
+2. vectorise the data and assign coordinate system EPSG:3035 (the raster value is put into an attribute column named 'density')
+3. remove all polygons with raster value (density) of 0
+4. apply zonal statisitcs (in QGIS: Tools > Raster analysis > Zonal statistics) with the mean of the depth (depth taken from HELCOM layer: “depth relief map” (raster data)) to get an average depth per density polygon (new attribute column named 'depth')
+5. remove all polygons having a depth of 0 or higher (this defines the shoreline and the land)
+6. remove all polygons having no depth value (due to missing overlap between depth data and shipping data)
+7. remove all polygons having a depth value over 25 m (noot inclusing 25 m; there is no impact assumed in these depths)
+8. make a new attribute 'depthzone' and classify depth values into the following classes:
+
+
+```{QGIS eval=FALSE}
+# attribue column 'depthzone':
+CASE
+ when "depth"<0 and "depth">=-10 then 1
+ when "depth"<-10 and "depth">=-15 then 2
+ when "depth"<-15 and "depth">=-20 then 3
+ when "depth"<-20 and "depth">=-25 then 4
+END
+```
+
+9. translate the density depending on the depthzone into a new attribute column ‘intensity’:
+
+
+```{QGIS eval=FALSE}
+# Weighted with depth:
+# dephtzone 1: eqiuv. to 100 %  => density value is taken directly
+# depthzone 2: equiv. to 50 % => density value divided by 2
+# depthzone 3: equiv. to 25 % => density value divided by 4
+# depthzone 4: equiv. to 10 % => density value divided by 10
+# depthzone 5: equiv. to 0 % => polygon is removed (everything over 25 m)
+
+# new attribute column 'intensity':
+CASE
+ when "depthzone"=1 then "density"
+ when "depthzone"=2 then  "density"/2.0 
+ when "depthzone"=3 then  "density"/4.0 
+ when "depthzone"=4 then  "density"/10.0 
+END
+```
+
+10. reclassify the intensity into the four MOP classes (we must ignore frequency at this stage as the data do not contain information on the shipping frequency). After the above steps, intensity values from 0 to 32166 remain. These are divided pragmatically into the uniform CumI scale:
+
+```{QGIS eval=FALSE}
+# new attribute column 'MOP':
+CASE
+when "intensity" >=0 and "intensity" < 8041 then 'very low'
+when "intensity" >=8041 and "intensity" < 16083 then 'low'
+when "intensity" >=16083 and "intensity" < 24124 then 'moderate'
+when "intensity" >= 24124 and "intensity" <= 32166 then 'high'
+END
+```
+
+
+```{r}
+shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated.shp"
+shipping_x <- st_read(shipping_file)
+# we only gave the clipping left and can then directly combine with the biotope layer:
+shipping_x <- shipping_x %>% st_intersection(clipLayer)
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-   my_union(int_layer) %>% 
-   dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,int,sens))) %>% 
-   dplyr::select(-int)
-   
+   my_union(shipping_x) %>% 
+   dplyr::mutate(impact_10 = unname(mapply(cumi_impact,MOP,sens))) %>% 
+   dplyr::select(-c(density,depth,depthzone,intensity,MOP)) %>%
+   rename_geometry("geometry")
 ```
-
-
 
 
 
 ## Calculate cumulative impact
 cumi_message("Cumulating all impacts ...")
-- splitting loss from disturbance
+
+
+Now, all impacts are calculated and integrated into the biotope map. So, we cann now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon and then do a pair-wise combination:
+
+
+```{r}
+# make list of all impact columns to loop over:
+impactColumns <- grep("impact_[1-9].?",names(impact_map),value=TRUE)
+
+# initialize a new column 'c_impact' for the cumulative impact
+initialColumn <- impactColumns[1]
+impact_map <- impact_map %>% mutate(c_impact = .data[[initialColumn]])
+
+# and set the value to the value of the first impact in the column list
+
+# prepare an easy access lookup for the impact cumulation:
+
+# loop over each polygon/multipolygon
+	# foreach pair, do the cumulation
+```
+
+
+```{r}
+impac_map_loss <- impact_map %>% filter(c_impact == 'loss')
+
+```
+
 
 
 ```{r}
@@ -880,6 +990,12 @@ n <- format((as.numeric(n2)-as.numeric(n1))/60, digits=1,decimal.mark=".")
 print(paste("Total assessment processing time:",n,"minutes",sep=" "))
 ```
 
+# Outlook
+This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available. This will be the point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures).
+
+Also, some visualizations will be implemented on the resulting impact map, such as graphs on the aerial extent of the various impact levels over the whole assessment area or certain subdivisions of that area.
+
+Further, the pre-processing of the bottom trawling data and the shipping data will be implemented.
 
 # Random notes and testing code
 
@@ -898,5 +1014,8 @@ i_1_2 <- my_union(i1,i2)
 
 # get rid of the fid_ columns:
 impact_map <- impact_map %>% select(-contains("fid_"))
+
+# get rid of MULTILINESTRINGS:
+filter(mySF,st_geometry_type(mySF) %in% c("POLYGON","MULTIPOLYGON"))
 
 ```
