@@ -327,7 +327,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   b_verylow <- st_buffer(pressureData,vl)
 	   b_low <- st_buffer(pressureData,l)
 	   zone_verylow <- st_sf(st_difference(st_union(b_verylow),st_union(b_low))) %>%
-		  st_cast("POLYGON") %>% mutate(int="very low") %>% rename_geometry("geometry")
+		  st_cast("POLYGON") %>% mutate(intensity="very low") %>% rename_geometry("geometry")
 	   output <- zone_verylow
 	}
 	
@@ -336,7 +336,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
 	   b_moderate <- st_buffer(pressureData,m)
 	   zone_low <- st_sf(st_difference(st_union(b_low),st_union(b_moderate))) %>%
-		  st_cast("POLYGON") %>% mutate(int="low") %>% rename_geometry("geometry")
+		  st_cast("POLYGON") %>% mutate(intensity="low") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_low)
 	   } else {
@@ -349,7 +349,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
 	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
 	   zone_moderate <- st_sf(st_difference(st_union(b_moderate),st_union(b_high))) %>%
-		  st_cast("POLYGON") %>% mutate(int="moderate") %>% rename_geometry("geometry")
+		  st_cast("POLYGON") %>% mutate(intensity="moderate") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_moderate)
 	   } else {
@@ -362,7 +362,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
 	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
 	   zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss))) %>%
-		  st_cast("POLYGON") %>% mutate(int="high") %>% rename_geometry("geometry")
+		  st_cast("POLYGON") %>% mutate(intensity="high") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_high)
 	   } else {
@@ -373,7 +373,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	# 'loss' zone:
 	if (loss > 0) {
 	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
-	   zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	   zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_loss)
 	   } else {
@@ -383,7 +383,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	
 	# footprint zone as 'loss':
 	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
-	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>% st_cast("POLYGON") %>% mutate(int="loss") %>% rename_geometry("geometry")
+	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 	   if (exists("output")) {
 		  output <- add_row(output,zone_footprint)
 	   } else {
@@ -399,17 +399,17 @@ In order to make the script a bit more concise, a function combining some standa
 
 
 ```{r}
-cumi_process_pressure <- function(my_sf,type,column) {
+cumi_process_pressure <- function(pressureData,pressureType,suffix) {
    #
-   # apply a buffer model to a GIS layer with pressures
-   # clip at biotope boundary ind combine with partial impact layer
+   # apply a buffer model to a GIS layer with pressures,
+   # clip at biotope boundary and combine with partial impact layer
    #
    # The function uses the global `impact_map` sf layer to add the pressure
    # Therefor, the output of this function should be assigned to `imapct_map` again
    #
-   # my_sf - sf layer with pressure data
-   # type - layer type from tribble `cumi_buffers`, column ~pressure
-   # column - column name to be filled with the calculated impacts
+   # pressureData - sf layer with pressure data
+   # pressureType - layer type from tribble `cumi_buffers`, column ~pressure
+   # suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
    #
    # mapply() needed in mutate() function since mutate() operates on vectors and the cumi_impact() function not.
    # Also, unname() needed in mutate() function since mapply() will return a named object and we only the vector inside.
@@ -418,12 +418,13 @@ cumi_process_pressure <- function(my_sf,type,column) {
    #    we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
    #    an issue)" which comes from the first st_difference() in my_union()
    #
-   int_layer <- cumi_buffer_intensity(my_sf,type) %>% st_intersection(clipLayer)
-   res <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-      my_union(int_layer) %>% 
-      dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,int,sens))) %>% 
+   intensity_layer <- cumi_buffer_intensity(pressureData,pressureType) %>% st_intersection(clipLayer)
+   column <- paste("impact_",suffix,sep="")
+   result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
+      my_union(intensity_layer) %>% 
+      dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,intensity,sens))) %>% 
       dplyr::select(-int)
-   return(res)
+   return(result)
 }
 ```
 
@@ -498,7 +499,6 @@ impact_map <- biotopeLayer
 ```
 
 ### Bottom trawling fishery
-#### 6. fishery (from ICES SAR numbers) [a = surface, b = subsurface]
 The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. *The next version of the script will also contain the necessary steps to make the preprocessing.*
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
@@ -567,7 +567,7 @@ mari_1_file <- "Data/Finfish_mariculture/Finfish_mariculture.shp"
 mari_1 <- st_read(mari_1_file) %>% filter(! str_detect(AREA,'land'))
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_1,"mariculture",impact_7A)
+impact_map <- cumi_process_pressure(mari_1,"mariculture","7A")
 
 ```
 
@@ -582,7 +582,7 @@ mari_2_file <- "Data/Shellfish_mariculture_points/Shellfish_mariculture_points.s
 mari_2 <- st_read(mari_2_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_2,"mariculture",impact_7B)
+impact_map <- cumi_process_pressure(mari_2,"mariculture","7B")
 
 ```
 
@@ -596,7 +596,7 @@ mari_3_file <- "Data/Shellfish_mariculture_areas/Shellfish_mariculture_areas.shp
 mari_3 <- st_read(mari_3_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
-impact_map <- cumi_process_pressure(mari_3,"mariculture",impact_7C)
+impact_map <- cumi_process_pressure(mari_3,"mariculture","7C")
 
 ```
 
@@ -621,7 +621,7 @@ extraction_file <- "Data/Extraction_of_sand_and_gravel/Extraction_of_sand_and_gr
 extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 | expire_yea > 2010)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(extraction_x,"extraction",impact_9A)
+impact_map <- cumi_process_pressure(extraction_x,"extraction","9A")
 
 ```
 
@@ -638,7 +638,7 @@ deposit_1_file <- "Data/deposit_areas_11_16/deposit_areas_11_16.shp"
 deposit_1 <- st_read(deposit_1_file)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(deposit_1,"depositing",impact_9B)
+impact_map <- cumi_process_pressure(deposit_1,"depositing","9B")
 
 ```
 
@@ -656,7 +656,7 @@ deposit_2_file <- "Data/deposit_points_11_16/deposit_points_11_16.shp"
 deposit_2 <- st_read(deposit_2_file)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(deposit_2,"depositing",impact_9C)
+impact_map <- cumi_process_pressure(deposit_2,"depositing","9C")
 
 ```
 
@@ -672,14 +672,14 @@ dredge_a_file <- "Data/Dredging_areas/Dredging_areas.shp"
 dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A=="capital")
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_1,"dredging CAP",impact_9D)
+impact_map <- cumi_process_pressure(dredge_1,"dredging CAP","9D")
 
 
 cumi_message("... maintenance dredging (areas) ...")
 dredge_2 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A != "capital")
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_2,"dredging M",impact_9E)
+impact_map <- cumi_process_pressure(dredge_2,"dredging M","9E")
 
 ```
 
@@ -704,9 +704,9 @@ dredge_3 <- dredge_3 %>% mutate(volume = as.numeric(sub(",",".",Amount_ton))/1.8
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
 # above 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2",impact_9F)
+impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2","9F")
 # below or equal to 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1",impact_9G)
+impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1","9G")
 
 
 
@@ -714,7 +714,7 @@ cumi_message("... maintenance dredging (points) ...")
 dredge_4 <- st_read(dredge_p_file) %>% filter(! Type %in% c("capital","Capital"))
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_4,"dredging M",impact_9H)
+impact_map <- cumi_process_pressure(dredge_4,"dredging M","9H")
 
 ```
 
@@ -735,7 +735,7 @@ pipeline_file <- "Data/Pipelines/Pipelines.shp"
 pipeline_o <- st_read(pipeline_file) %>% filter(Status %in% (c('Operational','Unknown')))
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(pipeline_o,"pipeline O",impact_3o)
+impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","3o")
 
 ```
 
@@ -751,7 +751,7 @@ cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construct
 
 # In this case, MOP is the same as intensity as frequency does not apply:
 # (we need the namespace identifier in rename as otherwise plyr::rename is called)
-impact_map <- cumi_process_pressure(cable_c,"cable C",impact_1c)
+impact_map <- cumi_process_pressure(cable_c,"cable C","1c")
 
 
 
@@ -760,7 +760,7 @@ cumi_message("... cables in operation ...")
 cable_o <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Operational')
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(cable_o,"cable O",impact_1o)
+impact_map <- cumi_process_pressure(cable_o,"cable O","1o")
 ```
 
 
@@ -776,7 +776,7 @@ oil_file <- "Data/Oil_platforms/Oil_platforms.shp"
 oil_x <- st_read(oil_file)
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(oil_x,"platform O",impact_4A)
+impact_map <- cumi_process_pressure(oil_x,"platform O","4A")
 ```
 
 
@@ -794,13 +794,13 @@ owf_file <- "Data/Wind_turbines/wind_turbines.shp"
 owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_c,"OWF C",impact_4c)
+impact_map <- cumi_process_pressure(owf_c,"OWF C","4c")
 
 
 cumi_message("... OWF in operation ...")
 owf_o <- st_read(owf_file) %>% filter(Status %in% (c('Generating power','Transformer')))
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_o,"OWF O",impact_4o)
+impact_map <- cumi_process_pressure(owf_o,"OWF O","4o")
 
 ```
 
@@ -826,7 +826,7 @@ coastalDef_c <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% filte
 
 # In this case, MOP is the same as intensity as frequency does not apply
 # (there is only one construction event)
-impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C",impact_2c)
+impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C","2c")
 
 
 
@@ -836,7 +836,7 @@ coastalDef_o <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>%
 	   filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O",impact_2o)
+impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O","2o")
 ```
 
 
