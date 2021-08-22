@@ -181,6 +181,8 @@ The first rule combines resilience and resistance of a biotope to derive the res
 
 ```{r}
 print("--- CumI ---: defining CumI objects and functions ...")
+
+# the sensitivity matrix:
 cumi_sensi_matrix <- tribble(
    ~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
    "very low",  "high",              "high",          "moderate",           "moderate",
@@ -188,34 +190,24 @@ cumi_sensi_matrix <- tribble(
    "moderate",  "moderate",          "moderate",      "low",                "very low",
    "high",      "moderate",          "low",           "low",                "very low"
 )
-# some helpers:
-cumi_sensi_matrix_resilience_columns <- 
-   c("resilience_verylow",
-     "resilience_low",
-     "resilience_moderate",
-     "resilience_high")
-     
-names(cumi_sensi_matrix_resilience_columns) <- 
-   c("very low", 
-     "low", 
-     "moderate", 
-     "high")
-     
-cumi_sensi <- function(resistance,resilience) {
+
+
+# a function to retrieve the sensitivity:
+cumi_get_sensi <- function(resist,resil) {
    #
    # function returning the sensitivity given the resilience
    # and the resistance as strings
    #
-   if (! resistance %in% names(cumi_sensi_matrix_resilience_columns)) {return("none")}
-   if (! resilience %in% names(cumi_sensi_matrix_resilience_columns)) {return("none")}
-   res <- resistance # since 'get()' doesn't seem to work in the filter down below ...
-   # identify the column name in the tribble based on the value:
-   myCol <- unname(cumi_sensi_matrix_resilience_columns[resilience])
-   # filter out the right row, seect the the right column there and isolate the value
-   cumi_sensi_matrix %>%
-      filter(resistance==res) %>%
-      dplyr::select(all_of(myCol)) %>%
-      pull()
+   # resist - the resistance as string
+   # resil - the resilience as string
+   #
+	resil <- paste("resilience_",gsub(" ", "", resil, fixed = TRUE),sep="")
+	result <- subset(cumi_sensi_matrix,resistance==resist)[[resil]]
+	if (is.null(result)) {
+		return('none')
+	} else {
+		return(result)
+	}
 }
 ```
 
@@ -229,37 +221,69 @@ cumi_impact_matrix <- tribble(
    "low",        "m2",      "m1",          "low",      "very low",
    "very low",   "m1",      "low",         "very low", "very low"
 )
-# some helpers:
-cumi_impact_matrix_MOP_columns <- 
-   c("MOP_verylow",
-     "MOP_low",
-     "MOP_moderate",
-     "MOP_high")
+
      
-names(cumi_impact_matrix_MOP_columns) <- 
-   c("very low", 
-     "low", 
-     "moderate", 
-     "high")
-     
-cumi_impact <- function(MOP,sensitivity) {
+cumi_get_impact <- function(MOP,sensi) {
    #
    # function returning the impact given the MOP
    # and the sensitivity as strings
    #
-   # MOP - MOP category as one of the names in cumi_impact_matrix_MOP_columns
-   # sensitivity - sensitivity category as one of the names in cumi_impact_matrix_MOP_columns
+   # MOP - MOP category as string
+   # sensi - sensitivity category as string
    #
    if (is.na(MOP)) {return("none")}
+   if (is.na(sensi)) {return("none")}
    if (MOP == "loss") {return("loss")}
-   if (! MOP %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
-   if (! sensitivity %in% names(cumi_impact_matrix_MOP_columns)) {return("none")}
-   sens <- sensitivity # since 'get()' doesn't seem to work in the filter down below ...
-   myMopCol <- unname(cumi_impact_matrix_MOP_columns[MOP])
-   cumi_impact_matrix %>%
-      filter(sensitivity==sens) %>%
-      dplyr::select(all_of(myMopCol)) %>%
-      pull()
+   MOP <- paste("MOP_",gsub(" ", "", MOP, fixed = TRUE),sep="")
+	result <- subset(cumi_impact_matrix,sensitivity==sensi)[[MOP]]
+	if (is.null(result)) {
+		return('none')
+	} else {
+		if (identical(result,character(0))) {print(paste(MOP,"and",sensi,"lead to null"))}
+		return(result)
+	}
+}
+```
+
+The third rule combines two impacts when these are cumulated in the last step of the assessment:
+
+```{r}
+# the cumulation matrix:
+cumi_cumulation_matrix <- tribble(
+	~imp1,       ~imp2_high, ~imp2_m3, ~imp2_m2, ~imp2_m1, ~imp2_low, ~imp2_verylow,
+	"high",      "loss",     "loss",   "high",   "high",   "high",    "high",
+	"m3",        "loss",     "loss",   "high",   "m3",     "m3",      "m3",
+	"m2",        "high",     "high",   "m3",     "m2",     "m2",      "m2",
+	"m1",        "high",     "m3",     "m2",     "m2",     "m1",      "m1",
+	"low",       "high",     "m3",     "m2",     "m1",     "low",     "low",
+	"very low",  "high",     "m3",     "m2",     "m1",     "low",     "very low"
+)
+
+# a function to retrieve the cumulative impact:
+cumi_get_cumulation <- function(i1,i2) {
+	#
+	# function returning the cumulative impact
+	# given two impacts that act at the same time
+	# and at the same place
+	#
+	# i1 - the first impact category as string
+	# i2 - the second impact category as string
+	#
+	if (i1 == "loss" || i2 == "loss" ) {return("loss")}
+	if (i1 == "none" && i2 == "none" ) {return("none")}
+	#
+	# in the cumulation "very low" acts just as "none",
+	# as if only one impacts would be present, not leading to a higher impact:
+	if (is.na(i1) || i1 == 'none') {i1 <- "very low"}
+	if (is.na(i2) || i2 == 'none') {i2 <- "very low"}
+   #
+   i2 <- paste("imp2_",gsub(" ", "", i2, fixed = TRUE),sep="")
+	result <- subset(cumi_cumulation_matrix,imp1==i1)[[i2]]
+	if (is.null(result)) {
+		return('none')
+	} else {
+		return(result)
+	}
 }
 ```
 
@@ -413,18 +437,20 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
    # pressureType - layer type from tribble `cumi_buffers`, column ~pressure
    # suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
    #
-   # mapply() needed in mutate() function since mutate() operates on vectors and the cumi_impact() function not.
+   # mapply() needed in mutate() function since mutate() operates on vectors and the cumi_get_impact() function not.
    # Also, unname() needed in mutate() function since mapply() will return a named object and we only the vector inside.
    # We need the namespace identifier in mutate() and select() as otherwise the plyr functions are called.
    # Also note, from here on we typically need to repeatedly cast impact_map to MULTIPOLYGON as otherwise
    #    we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
    #    an issue)" which comes from the first st_difference() in my_union()
    #
+   cumi_message("... intersecting ...")
    intensity_layer <- cumi_buffer_intensity(pressureData,pressureType) %>% st_intersection(clipLayer)
    column <- paste("impact_",suffix,sep="")
+   cumi_message("... unioning ...")
    result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
       my_union(intensity_layer) %>% 
-      dplyr::mutate( {{ column }} := unname(mapply(cumi_impact,intensity,sens))) %>% 
+      dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
       dplyr::select(-intensity)
    return(result)
 }
@@ -443,6 +469,7 @@ cumi_message <- function(msg) {
    #
    msg <- paste("--- CumI ---:",msg,sep=" ")
    cat(paste(" ",msg," "," ",sep="\n"))
+   flush.console()
 }
 ```
 
@@ -469,24 +496,70 @@ The current biotope map is a combination of all layers in the HELCOM database un
 
 - assign sensitivities to biotopes
 - apply "high" spatial sensitivity to regions with Mytilus, Zostera, Furcellaria, Fucus, Chara
+- assign assessment area to the biotopes by intersection with HELCOM map "HELCOM subbasins 2018"
+- assign country to the polygons by intersection with EMOTnet data "Emodnet_HA_OtherManagementsAreas_EEZ_20180629.shp"
+- assign bottom salinity from HELCOM BALANCE data "BALANCE Modelledbottomsalinity/Bottomsalinity-vektorisiert.shp"
 
-The data file has three different sensitivity columns:
+<!--
+the emodnet data where extended into the layer countries.shp by drawing additional polygons over land. this makes sure that all poygons from the HELCOM data are included and not clipped away since the emodnet shoreline is very rough
 
+biotopes.shp > buffer (0) + helcom_subbasins_2018 > buffer(0) = intersect > biotopes+assess
+
+Emodnet_HA_OtherManagementsAreas_EEZ_20180629.shp > manual extension = countries.shp
+
+biotopes+assess > buffer(0) + countries > buffer(0) = intersect > biotopes+assess+countries
+
+biotopes+assess+countries > buffer(0) + Bottomsalinity-vektorisiert > buffer(0) > coord(3035)  = union > biotopes-pre_calculated
+
+delete all polygons without biotope assignment (these are the ones from the salinity layer that lie beyond the biotope map)
+filter(biotopes-pre_calculated,! is.na(Biotope))
+
+delete some columns:
+select(-c(HELCOM_ID,Area_km2,DN))
+
+correct an error in Sal2:
+biotopes-pre_calculated$Sal2[biotopes-pre_calculated$Sal2 == ">5"] <- "<5"
+
+
+-->
+
+The pre-calculated biotope layer has these attribute columns:
+
+- Biotope = HELCOM broadscale habitat
 - sens = general pressure-independant sensitivity
 - s_surf = sensitivity against surface abrasion due to bottom trawling
 - s_subsurf = sensitivity against subsurface penetration due to bottom trawling (not used in this assessment)
+- sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
+- level_2 = HELCOM subbasins 2018 (assessment units)
+- Territory = country name
+- Sal = bottom salinity class (from HELCOM BALANCE project)
+- Sal2 = bottom salinity value range (from HELCOM BALANCE project)
 
 ```{r}
 cumi_message("preparing biotope layer ...")
-biotope_file <- "Data/Biotopes/biotopes.shp"
+biotope_file <- "Data/Biotopes/biotopes-pre_calculated.shp"
 # this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
 # in order to prevent errors in later spatial operations
-biotopeLayer <- st_read(biotope_file) %>% st_transform(coordSystem) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
+biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
+```
+
+Starting from the pre-defined sensitivities, two countries have requested changes to these. Those changes are implemented in the following step (only for those polygons where the sensitivity not was raised to 'high' due to presence of sensitive species):
+
+```{r}
+# changes for Denmark:
+biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa mix"] <- "high"
+biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra mix"] <- "high"
+biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra sand"] <- "low"
+biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa sand"] <- "low"
+# changes for Sweden:
+biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Sweden" & biotopeLayer$Sal2 == ">5"] <- "low"
+
 ```
 
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
 ```{r}
+cumi_message("... making clipLayer ... st_union() ...")
 clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
 ```
 
@@ -507,7 +580,7 @@ impact_map <- biotopeLayer
 cumi_message("processing trawling fishery ...")
 ```
 
-The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer and the pressure has been smoothed from c-squares into an 1x1 km grid. *The next version of the script will also contain the necessary steps in R to make the preprocessing.*
+The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer, the pressure has been smoothed from c-squares into an 1x1 km grid, the MOP has been calculated (column 'MOP_1') and the data have been combined with the above pre-calculated biotope map (including the changes in the sensitivities for DK and SE). *The next version of the script will also contain the necessary steps in R to make the preprocessing.*
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
@@ -521,16 +594,15 @@ The SAR values are treated directly as intensity and frequency is ignored, thus 
 #
 get_pre_calculated_data <- TRUE
 #
-# You might even want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS.
+# You might even want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS (24–45 seconds on my machine!!).
 #
-cumi_message("processing of bottom trawling fishery ...")
 if (get_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
 	fishing_file_pre <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf_pre_calculated.shp"
 	if (! file.exists(fishing_file_pre)) {
 		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
 	} else {
-		impact_map <- st_read(fishing_file_pre)
+		impact_map <- st_read(fishing_file_pre) %>% st_make_valid()
 	}
 } else {
 	cumi_message("... calculating fishery impact - this will take a lot of time ...")
@@ -552,11 +624,19 @@ if (get_pre_calculated_data) {
 	   sar_avg >= 2                     ~ 'high',
 	   TRUE                             ~ 'undefined'
 	))
-	fishing_x <- fishing_x %>% dplyr::select(-c(ET_ID,H_sub_code,H_sub_name,location,SURFSAR_11,SURFSAR_12,SURFSAR_13,SURFSAR_14,SURFSAR_15,SURFSAR_16,sar_avg,int))
+	# we can now delete the columns we do not need in future
+	# and we can remove all polygons with no MOP
+	# and dissolve the MOP layer:
+	fishing_x <- fishing_x %>%
+		dplyr::select(-c(ET_ID,H_sub_code,H_sub_name,location,SURFSAR_11,SURFSAR_12,SURFSAR_13,SURFSAR_14,SURFSAR_15,SURFSAR_16,sar_avg)) %>%
+		dplyr::filter(! MOP=='none') %>%
+		group_by(MOP) %>% 
+		summarize(geometry = st_union(geometry))
 	
 	# the my_union() in the following line is what takes 99.9% of the time in this pressure:
-	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x) %>% dplyr::mutate(impact_1 = unname(mapply(cumi_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
+	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x)
 }
+impact_map <- impact_map %>% st_cast("MULTIPOLYGON") %>% dplyr::mutate(impact_1 = unname(mapply(cumi_get_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
 
 ```
 
@@ -939,12 +1019,12 @@ END
 
 ```{r}
 shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated.shp"
-shipping_x <- st_read(shipping_file)
+shipping_x <- st_read(shipping_file) %>% st_make_valid()
 # we only gave the clipping left and can then directly combine with the biotope layer:
 shipping_x <- shipping_x %>% st_intersection(clipLayer)
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
    my_union(shipping_x) %>% 
-   dplyr::mutate(impact_10 = unname(mapply(cumi_impact,MOP,sens))) %>% 
+   dplyr::mutate(impact_10 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
    dplyr::select(-c(density,depth,depthzone,intensity,MOP)) %>%
    rename_geometry("geometry")
 ```
@@ -993,9 +1073,12 @@ print(paste("Total assessment processing time:",n,"minutes",sep=" "))
 # Outlook
 This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available. This will be the point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures).
 
-Also, some visualizations will be implemented on the resulting impact map, such as graphs on the aerial extent of the various impact levels over the whole assessment area or certain subdivisions of that area.
+Apart from thsi, the following updates are planned for the next version:
 
-Further, the pre-processing of the bottom trawling data and the shipping data will be implemented.
+- some visualizations will be implemented on the resulting impact map, such as graphs on the aerial extent of the various impact levels over the whole assessment area or certain subdivisions of that area
+- the pre-processing of the bottom trawling data and the shipping data will be implemented
+- the pre-processing of the biotope map
+- a distinction between 'no data' and 'no impact' will be implemented
 
 # Random notes and testing code
 
