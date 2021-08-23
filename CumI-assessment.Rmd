@@ -269,15 +269,16 @@ cumi_get_cumulation <- function(i1,i2) {
 	# i1 - the first impact category as string
 	# i2 - the second impact category as string
 	#
+	# in the cumulation "very low" acts just as "none",
+	# as if only one impacts would be present, not leading to a higher impact:
+	# (this test needs to come first, because we cannot use NA values in the code further below)
+	if (is.na(i1) || i1 == 'none') {i1 <- "very low"}
+	if (is.na(i2) || i2 == 'none') {i2 <- "very low"}
+	#
 	if (i1 == "loss" || i2 == "loss" ) {return("loss")}
 	if (i1 == "none" && i2 == "none" ) {return("none")}
 	#
-	# in the cumulation "very low" acts just as "none",
-	# as if only one impacts would be present, not leading to a higher impact:
-	if (is.na(i1) || i1 == 'none') {i1 <- "very low"}
-	if (is.na(i2) || i2 == 'none') {i2 <- "very low"}
-   #
-   i2 <- paste("imp2_",gsub(" ", "", i2, fixed = TRUE),sep="")
+	i2 <- paste("imp2_",gsub(" ", "", i2, fixed = TRUE),sep="")
 	result <- subset(cumi_cumulation_matrix,imp1==i1)[[i2]]
 	if (is.null(result)) {
 		return('none')
@@ -442,16 +443,16 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
    # We need the namespace identifier in mutate() and select() as otherwise the plyr functions are called.
    # Also note, from here on we typically need to repeatedly cast impact_map to MULTIPOLYGON as otherwise
    #    we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
-   #    an issue)" which comes from the first st_difference() in my_union()
+   #    an issue)" which comes from the first st_difference() in my_union_sf()
    #
-   cumi_message("... intersecting ...")
-   intensity_layer <- cumi_buffer_intensity(pressureData,pressureType) %>% st_intersection(clipLayer)
+   intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
    column <- paste("impact_",suffix,sep="")
    cumi_message("... unioning ...")
    result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
       my_union(intensity_layer) %>% 
       dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
-      dplyr::select(-intensity)
+      dplyr::select(-intensity) %>% filter(! is.na(Biotope))
+   cumi_message("Done!")
    return(result)
 }
 ```
@@ -461,13 +462,24 @@ Last, and not least, we want some regular feedback from the script, since some o
 
 
 ```{r}
+get_running_time <- function(n1,n2) {
+	#
+	# return the difference between to Sys.time() values an minutes,
+	# nicely formatted
+	#
+	# n1, n2 - first and second Sys.time() values
+	#
+	n <- format((as.numeric(n2)-as.numeric(n1))/60, digits=1,decimal.mark=".")
+	return(paste(n,"minutes"))
+}
+
 cumi_message <- function(msg) {
    #
    # print some nice, friendly message
    #
    # msg - text of the message to print
    #
-   msg <- paste("--- CumI ---:",msg,sep=" ")
+   msg <- paste("--- CumI --- (", get_running_time(n1,Sys.time()),"): ",msg,sep="")
    cat(paste(" ",msg," "," ",sep="\n"))
    flush.console()
 }
@@ -519,8 +531,6 @@ select(-c(HELCOM_ID,Area_km2,DN))
 
 correct an error in Sal2:
 biotopes-pre_calculated$Sal2[biotopes-pre_calculated$Sal2 == ">5"] <- "<5"
-
-
 -->
 
 The pre-calculated biotope layer has these attribute columns:
@@ -540,12 +550,12 @@ cumi_message("preparing biotope layer ...")
 biotope_file <- "Data/Biotopes/biotopes-pre_calculated.shp"
 # this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
 # in order to prevent errors in later spatial operations
-biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
+##biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
 ```
 
 Starting from the pre-defined sensitivities, two countries have requested changes to these. Those changes are implemented in the following step (only for those polygons where the sensitivity not was raised to 'high' due to presence of sensitive species):
 
-```{r}
+```{r eval=FALSE}
 # changes for Denmark:
 biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa mix"] <- "high"
 biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra mix"] <- "high"
@@ -560,7 +570,7 @@ All pressure layers will be clipped at the outline of the biotope map, making th
 
 ```{r}
 cumi_message("... making clipLayer ... st_union() ...")
-clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+##clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
 ```
 
 ## Pressure data and impact calculation
@@ -568,7 +578,7 @@ The initial impact map is just the biotope layer. This impact map gets combined 
 
 The assessment period is: 2011–2016.
 
-```{r}
+```{r eval=FALSE}
 cumi_message("preparing impact layer ...")
 # initial impact layer is just the biotope map:
 impact_map <- biotopeLayer
@@ -1016,17 +1026,24 @@ when "intensity" >= 24124 and "intensity" <= 32166 then 'high'
 END
 ```
 
+11. dissolve the polygons by MOP only to reduce file size and risk of artifacts.
+
+
+
+For now, we word with the pre-calculated data in our dataset:
+
 
 ```{r}
-shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated.shp"
+shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated-new.shp"
 shipping_x <- st_read(shipping_file) %>% st_make_valid()
-# we only gave the clipping left and can then directly combine with the biotope layer:
-shipping_x <- shipping_x %>% st_intersection(clipLayer)
+# we only have the clipping left and can then directly combine with the biotope layer:
+##shipping_x <- shipping_x %>% st_intersection(clipLayer)
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
    my_union(shipping_x) %>% 
-   dplyr::mutate(impact_10 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
-   dplyr::select(-c(density,depth,depthzone,intensity,MOP)) %>%
-   rename_geometry("geometry")
+   dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
+   dplyr::select(-c(MOP)) %>%
+   rename_geometry("geometry") %>%
+   filter(! is.na(Biotope))
 ```
 
 
@@ -1039,19 +1056,31 @@ Now, all impacts are calculated and integrated into the biotope map. So, we cann
 
 
 ```{r}
+#
+# the following code is explicit and thus slow (approx. 1 hour on my machine), will be speed-optimized later
+#
 # make list of all impact columns to loop over:
 impactColumns <- grep("impact_[1-9].?",names(impact_map),value=TRUE)
 
-# initialize a new column 'c_impact' for the cumulative impact
+# initialize a new column 'impact_cu' for the cumulative impact:
+impact_map <- mutate(impact_map,impact_cumi = NA)
+
 initialColumn <- impactColumns[1]
-impact_map <- impact_map %>% mutate(c_impact = .data[[initialColumn]])
+columnCount <- length(impactColumns)
 
-# and set the value to the value of the first impact in the column list
-
-# prepare an easy access lookup for the impact cumulation:
-
-# loop over each polygon/multipolygon
-	# foreach pair, do the cumulation
+# loop over each polygon/multipolygon in the map:
+print(paste("0 of",nrow(impact_map)))
+for (myRowIndex in 1:nrow(impact_map)) {
+	rowData <- impact_map[myRowIndex, ]
+	if (myRowIndex %% 2000 == 0) {print(paste(myRowIndex,"of",nrow(impact_map))); flush.console()}
+	# foreach pair of impact columns, do the cumulation:
+	for (myColIndex in 1:(columnCount-1)) {
+		if (myColIndex == 1) {i1 <- rowData[[impactColumns[1]]]} else {i1 <- ik}
+		i2 <- rowData[[impactColumns[myColIndex+1]]]
+		ik <- cumi_get_cumulation(i1,i2)
+	}
+	impact_map$impact_cu[myRowIndex] <- ik
+}
 ```
 
 
@@ -1066,8 +1095,7 @@ impac_map_loss <- impact_map %>% filter(c_impact == 'loss')
 n2 <- Sys.time()
 cumi_message("Finished assesment!")
 print(n2)
-n <- format((as.numeric(n2)-as.numeric(n1))/60, digits=1,decimal.mark=".")
-print(paste("Total assessment processing time:",n,"minutes",sep=" "))
+print(paste("Total assessment processing time:",get_running_time(n1,n2))
 ```
 
 # Outlook
