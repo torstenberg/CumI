@@ -1,8 +1,8 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2021-08-05
-output: NULL
+date: 2021-08-23
+output: html_document
 ---
 
 # How to use this document
@@ -21,6 +21,8 @@ library(rmarkdown)
 library(knitr)
 render("CumI-assessment.Rmd")
 ```
+
+If you do not want to evaluate the R code, but just render the document, use `knitr::opts_chunk$set(eval=FALSE)` before rendering.
 
 # R packages to use
 The R code uses the following libraries which should be installed first (if not present):
@@ -155,7 +157,7 @@ my_union <- function(a,b) {
 If you can't use QGIS, you will need to rename one of the first two union functions to `my_union` (and rename the QGIS function to something else) and live with a very poor performance, meaning to wait hours and hours for some GIS union processing (I don't even know how long it takes because I always stopped the execution after 1–2 hours).
 
 
-Sometimes, we need to rename the geometry column of an sf object, since sf itself will give them some weird names:
+Sometimes, we need to rename the geometry column of an sf object, since sf itself will give it some weird names:
 
 ```{r}
 rename_geometry <- function(g, name){
@@ -269,14 +271,13 @@ cumi_get_cumulation <- function(i1,i2) {
 	# i1 - the first impact category as string
 	# i2 - the second impact category as string
 	#
-	# in the cumulation "very low" acts just as "none",
-	# as if only one impacts would be present, not leading to a higher impact:
-	# (this test needs to come first, because we cannot use NA values in the code further below)
-	if (is.na(i1) || i1 == 'none') {i1 <- "very low"}
-	if (is.na(i2) || i2 == 'none') {i2 <- "very low"}
+	# The following test needs to come first, because we cannot use NA values in the code further below:
+	if (is.na(i1)) {i1 == 'none'}
+	if (is.na(i2)) {i2 == 'none'}
+	if (i1 == 'none') {return(i2)}
+	if (i2 == 'none') {return(i1)}
 	#
 	if (i1 == "loss" || i2 == "loss" ) {return("loss")}
-	if (i1 == "none" && i2 == "none" ) {return("none")}
 	#
 	i2 <- paste("imp2_",gsub(" ", "", i2, fixed = TRUE),sep="")
 	result <- subset(cumi_cumulation_matrix,imp1==i1)[[i2]]
@@ -469,8 +470,10 @@ get_running_time <- function(n1,n2) {
 	#
 	# n1, n2 - first and second Sys.time() values
 	#
-	n <- format((as.numeric(n2)-as.numeric(n1))/60, digits=1,decimal.mark=".")
-	return(paste(n,"minutes"))
+	min <- (as.numeric(n2)-as.numeric(n1))/60
+	min2 <- format(min, digits=4, decimal.mark=".")
+	hours <- format(min/60, digits=3, decimal.mark=".")
+	return(paste(min2,"minutes = ",hours,"hours"))
 }
 
 cumi_message <- function(msg) {
@@ -488,11 +491,23 @@ cumi_message <- function(msg) {
 # The assessment
 
 ## Setup
-Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe":
+Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps:
 
 ```{r}
 cumi_message("setting up the assessment ...")
 coordSystem <- 3035
+
+# As the processing of the clipLayer and the bottom trawling pressure take veeery looong to be calculated (approx. 7 hours for bottom trawling on my machine
+# and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure,
+# a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling.
+#
+# I.e., the pre-calculated layer already contains the biotope data combined with the bottom trawling data,
+# and the pre-calculated layer already has the MOP from trawling included.
+#
+# You can choose to either use the pre-calculated data (set `use_pre_calculated_data` to `TRUE`) for the further process, or re-calculate it here (set it to `FALSE`).
+#
+use_pre_calculated_data <- TRUE
+
 ```
 
 For the assessment for work with this script, all data file need to be present on your computer. The data are GIS files from various sources and they need to have specific attribute table columns to work directly with this script. A folder "Data" comes together with this script and enables you to run the current assessment without changing the script, as long as the script is in the same directory as the 'Data' folder:
@@ -515,13 +530,13 @@ The current biotope map is a combination of all layers in the HELCOM database un
 <!--
 the emodnet data where extended into the layer countries.shp by drawing additional polygons over land. this makes sure that all poygons from the HELCOM data are included and not clipped away since the emodnet shoreline is very rough
 
-biotopes.shp > buffer (0) + helcom_subbasins_2018 > buffer(0) = intersect > biotopes+assess
+Data/Biotopes/biotopes.shp > buffer (0) + helcom_subbasins_2018 > buffer(0) = intersect > Data/Biotopes/biotopes+assess.shp
 
-Emodnet_HA_OtherManagementsAreas_EEZ_20180629.shp > manual extension = countries.shp
+Emodnet_HA_OtherManagementsAreas_EEZ_20180629.shp > manual extension = Data/Biotopes/countries.shp
 
-biotopes+assess > buffer(0) + countries > buffer(0) = intersect > biotopes+assess+countries
+biotopes+assess > buffer(0) + countries > buffer(0) = intersect > Data/Biotopes/biotopes+assess+countries.shp
 
-biotopes+assess+countries > buffer(0) + Bottomsalinity-vektorisiert > buffer(0) > coord(3035)  = union > biotopes-pre_calculated
+biotopes+assess+countries > buffer(0) + Bottomsalinity-vektorisiert > buffer(0) > coord(3035)  = union > Data/Biotopes/biotopes-pre_calculated.shp
 
 delete all polygons without biotope assignment (these are the ones from the salinity layer that lie beyond the biotope map)
 filter(biotopes-pre_calculated,! is.na(Biotope))
@@ -550,27 +565,33 @@ cumi_message("preparing biotope layer ...")
 biotope_file <- "Data/Biotopes/biotopes-pre_calculated.shp"
 # this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
 # in order to prevent errors in later spatial operations
-##biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
+if (! use_pre_calculated_data) {
+	biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% dplyr::select(-s_subsurf) %>% st_make_valid()
+}
 ```
 
-Starting from the pre-defined sensitivities, two countries have requested changes to these. Those changes are implemented in the following step (only for those polygons where the sensitivity not was raised to 'high' due to presence of sensitive species):
+Starting from the pre-defined sensitivities, two countries have requested changes to these during the sensitivity survey which was done in June 2021 within the EN BENTHIC group. Those changes are implemented in the following step (only for those polygons where the sensitivity not was raised to 'high' due to presence of sensitive species):
 
-```{r eval=FALSE}
-# changes for Denmark:
-biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa mix"] <- "high"
-biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra mix"] <- "high"
-biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra sand"] <- "low"
-biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa sand"] <- "low"
-# changes for Sweden:
-biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Sweden" & biotopeLayer$Sal2 == ">5"] <- "low"
+```{r}
+if (! use_pre_calculated_data) {
+	# changes for Denmark:
+	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa mix"] <- "high"
+	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra mix"] <- "high"
+	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra sand"] <- "low"
+	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa sand"] <- "low"
+	# changes for Sweden:
+	biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Sweden" & biotopeLayer$Sal2 == ">5"] <- "low"
+}
 
 ```
 
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
 ```{r}
-cumi_message("... making clipLayer ... st_union() ...")
-##clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+if (! use_pre_calculated_data) {
+	cumi_message("... making clipLayer ... st_union() ...")
+	clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+}
 ```
 
 ## Pressure data and impact calculation
@@ -578,10 +599,12 @@ The initial impact map is just the biotope layer. This impact map gets combined 
 
 The assessment period is: 2011–2016.
 
-```{r eval=FALSE}
-cumi_message("preparing impact layer ...")
-# initial impact layer is just the biotope map:
-impact_map <- biotopeLayer
+```{r}
+if (! use_pre_calculated_data) {
+	cumi_message("preparing impact layer ...")
+	# initial impact layer is just the biotope map:
+	impact_map <- biotopeLayer
+}
 ```
 
 ### 1. Bottom trawling fishery
@@ -595,18 +618,7 @@ The fishery data were provided by ICES and then put into HELCOM Maps and Data Se
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
 ```{r}
-#
-# As this is the first pressure and it takes veeery looong to be calculated (approx. 7 hours on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure,
-# we here provide a pre-calculated file, based on the first part of the script up to here. I.e., the pre-calculated layer
-# already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has
-# the impact from trawling included.
-# You can choose to either use the pre-calculated one (TRUE) for the further process, or re-calculate (FALSE) it here.
-#
-get_pre_calculated_data <- TRUE
-#
-# You might even want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS (24–45 seconds on my machine!!).
-#
-if (get_pre_calculated_data) {
+if (use_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
 	fishing_file_pre <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf_pre_calculated.shp"
 	if (! file.exists(fishing_file_pre)) {
@@ -615,7 +627,7 @@ if (get_pre_calculated_data) {
 		impact_map <- st_read(fishing_file_pre) %>% st_make_valid()
 	}
 } else {
-	cumi_message("... calculating fishery impact - this will take a lot of time ...")
+	cumi_message("... calculating fishery impact - this will take a lot of time, so see you tomorrow ...")
 	fishing_file <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf.shp"
 	fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
 	
@@ -643,7 +655,9 @@ if (get_pre_calculated_data) {
 		group_by(MOP) %>% 
 		summarize(geometry = st_union(geometry))
 	
-	# the my_union() in the following line is what takes 99.9% of the time in this pressure:
+	# the my_union() in the following line is what takes 99.9% of the time in this pressure,
+	# you might want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS
+	# (24–45 seconds on my machine compared to approx. 7 hours with R !!!).
 	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x)
 }
 impact_map <- impact_map %>% st_cast("MULTIPOLYGON") %>% dplyr::mutate(impact_1 = unname(mapply(cumi_get_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
@@ -656,7 +670,7 @@ impact_map <- impact_map %>% st_cast("MULTIPOLYGON") %>% dplyr::mutate(impact_1 
 cumi_message("processing of mariculture ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Finfish mariculture](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=3cfa469a-6a78-4913-b82f-57fd0e7f4dc0&fname=Finfish_mariculture.zip&access=public), last accessed 2021-08-17.
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Finfish mariculture](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/3cfa469a-6a78-4913-b82f-57fd0e7f4dc0), last accessed 2021-08-17.
 
 
 These are point data. Some of the points are classified as "on land" and are ignored.
@@ -672,7 +686,7 @@ impact_map <- cumi_process_pressure(mari_1,"mariculture","2A")
 ```
 
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture points](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=21efdecc-2fd7-4bfb-9832-68c995291bf7&fname=Shellfish_mariculture_points.zip&access=public), last accessed 2021-08-17.
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture points](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/21efdecc-2fd7-4bfb-9832-68c995291bf7), last accessed 2021-08-17.
 
 These are point data. All sites are taken into account.
 
@@ -686,7 +700,7 @@ impact_map <- cumi_process_pressure(mari_2,"mariculture","2B")
 
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture areas](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=8fbf946a-18d2-4b24-98ad-1327ba2820a8&fname=Shellfish_mariculture_areas.zip&access=public), last accessed 2021-08-18.
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture areas](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/8fbf946a-18d2-4b24-98ad-1327ba2820a8), last accessed 2021-08-18.
 
 These are polygon data. All sites are taken into account.
 
@@ -706,7 +720,7 @@ impact_map <- cumi_process_pressure(mari_3,"mariculture","2C")
 cumi_message("processing extraction and disposal of sediments ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=683224c3-2fb9-4f2f-b748-bf5ad712d708&fname=Extraction_of_sand_and_gravel.zip&access=public), last accessed 2021-08-16.
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/683224c3-2fb9-4f2f-b748-bf5ad712d708), last accessed 2021-08-16.
 
 
 The data are represented as polygons. Since the extraction depth and the spatial extent of the extraction within the polygon is unknown, the complete polygon area is currently treated as loss. All listed sites are assumed active or at least disturbed as the expire dates (attribute column 'expire_yea') are either not specified or not before the start of the assessment period.
@@ -917,7 +931,7 @@ impact_map <- cumi_process_pressure(owf_o,"OWF O","5C")
 cumi_message("processing coastal protection ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/resources.get?uuid=2d47c5ea-4590-465f-a462-60ef59d3d7d3&fname=Coastal_defense.zip&access=public), last accessed 2021-08-12.
+Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/2d47c5ea-4590-465f-a462-60ef59d3d7d3), last accessed 2021-08-12.
 
 These are the interesting attributes in the data (description taken from HECLOM metadata page on this dataset):
 
@@ -999,18 +1013,18 @@ END
 
 ```{QGIS eval=FALSE}
 # Weighted with depth:
-# dephtzone 1: eqiuv. to 100 %  => density value is taken directly
-# depthzone 2: equiv. to 50 % => density value divided by 2
-# depthzone 3: equiv. to 25 % => density value divided by 4
-# depthzone 4: equiv. to 10 % => density value divided by 10
-# depthzone 5: equiv. to 0 % => polygon is removed (everything over 25 m)
+# dephtzone 1: eqiuv. to 100 % => density value is taken directly
+# depthzone 2: equiv. to  50 % => density value divided by 2
+# depthzone 3: equiv. to  25 % => density value divided by 4
+# depthzone 4: equiv. to  10 % => density value divided by 10
+# depthzone 5: equiv. to   0 % => polygon is removed (everything over 25 m)
 
 # new attribute column 'intensity':
 CASE
  when "depthzone"=1 then "density"
- when "depthzone"=2 then  "density"/2.0 
- when "depthzone"=3 then  "density"/4.0 
- when "depthzone"=4 then  "density"/10.0 
+ when "depthzone"=2 then "density"/2.0 
+ when "depthzone"=3 then "density"/4.0 
+ when "depthzone"=4 then "density"/10.0 
 END
 ```
 
@@ -1019,9 +1033,9 @@ END
 ```{QGIS eval=FALSE}
 # new attribute column 'MOP':
 CASE
-when "intensity" >=0 and "intensity" < 8041 then 'very low'
-when "intensity" >=8041 and "intensity" < 16083 then 'low'
-when "intensity" >=16083 and "intensity" < 24124 then 'moderate'
+when "intensity" >=     0 and "intensity" <   8041 then 'very low'
+when "intensity" >=  8041 and "intensity" <  16083 then 'low'
+when "intensity" >= 16083 and "intensity" <  24124 then 'moderate'
 when "intensity" >= 24124 and "intensity" <= 32166 then 'high'
 END
 ```
@@ -1030,14 +1044,18 @@ END
 
 
 
-For now, we word with the pre-calculated data in our dataset:
+For now, we work with the pre-calculated data in our dataset:
 
 
 ```{r}
-shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated-new.shp"
+shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated.shp"
 shipping_x <- st_read(shipping_file) %>% st_make_valid()
-# we only have the clipping left and can then directly combine with the biotope layer:
-##shipping_x <- shipping_x %>% st_intersection(clipLayer)
+# we only have left to combine with the biotope layer
+# (following the same approach as in cumi_process_pressure()):
+#
+# you may want to take out the union from here and perform this individual action in ArcGIS,
+# as this will cut down the processing time from approx. 8 hours to under a minute ...
+#
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
    my_union(shipping_x) %>% 
    dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
@@ -1052,7 +1070,7 @@ impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>%
 cumi_message("Cumulating all impacts ...")
 
 
-Now, all impacts are calculated and integrated into the biotope map. So, we cann now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon and then do a pair-wise combination:
+Now, all individual impacts are calculated and integrated into the biotope map. So, we can now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon and then do a pair-wise combination:
 
 
 ```{r}
@@ -1062,8 +1080,8 @@ Now, all impacts are calculated and integrated into the biotope map. So, we cann
 # make list of all impact columns to loop over:
 impactColumns <- grep("impact_[1-9].?",names(impact_map),value=TRUE)
 
-# initialize a new column 'impact_cu' for the cumulative impact:
-impact_map <- mutate(impact_map,impact_cumi = NA)
+# initialize a new column 'cumi' for the cumulative impact:
+impact_map <- mutate(impact_map,cumi = NA)
 
 initialColumn <- impactColumns[1]
 columnCount <- length(impactColumns)
@@ -1079,13 +1097,15 @@ for (myRowIndex in 1:nrow(impact_map)) {
 		i2 <- rowData[[impactColumns[myColIndex+1]]]
 		ik <- cumi_get_cumulation(i1,i2)
 	}
-	impact_map$impact_cu[myRowIndex] <- ik
+	impact_map$cumi[myRowIndex] <- ik
 }
 ```
 
+As the last step, cumulative disturbance and loss are separated. The CumI does only evaluated disturbance. The loss layer can be used for e.g. MSFD criterion D6C4.
 
 ```{r}
-impac_map_loss <- impact_map %>% filter(c_impact == 'loss')
+impact_map_loss <- impact_map %>% filter(cumi == 'loss')
+impact_map_disturbance <- impact_map %>% filter(! cumi == 'loss')
 
 ```
 
@@ -1095,38 +1115,21 @@ impac_map_loss <- impact_map %>% filter(c_impact == 'loss')
 n2 <- Sys.time()
 cumi_message("Finished assesment!")
 print(n2)
-print(paste("Total assessment processing time:",get_running_time(n1,n2))
+print(paste("Total assessment processing time:",get_running_time(n1,n2)))
+
+st_write(impact_map_disturbance,paste("Data/Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".shp",sep= ""))
+st_write(impact_map_loss,paste("Data/Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".shp",sep= ""))
 ```
 
 # Outlook
-This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available. This will be the point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures).
+This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
 
-Apart from thsi, the following updates are planned for the next version:
+Apart from this, the following updates are planned for the next version:
 
 - some visualizations will be implemented on the resulting impact map, such as graphs on the aerial extent of the various impact levels over the whole assessment area or certain subdivisions of that area
 - the pre-processing of the bottom trawling data and the shipping data will be implemented
 - the pre-processing of the biotope map
 - a distinction between 'no data' and 'no impact' will be implemented
-
-# Random notes and testing code
-
-```{r eval=FALSE}
-#
-# just some testing code ...
-#
-impact1 <- "/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/Daten/QGIS-Modelle/QGIS aktuell/MSRL III/CumI-Berechnung HELCOM 2020-02/1_biotopes.shp"
-
-impact2 <- "/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/Daten/QGIS-Modelle/QGIS aktuell/MSRL III/CumI-Berechnung HELCOM 2020-02/2_biotopes.shp"
-
-i1 <- st_read(impact1)
-i2 <- st_read(impact2)
-
-i_1_2 <- my_union(i1,i2)
-
-# get rid of the fid_ columns:
-impact_map <- impact_map %>% select(-contains("fid_"))
-
-# get rid of MULTILINESTRINGS:
-filter(mySF,st_geometry_type(mySF) %in% c("POLYGON","MULTIPOLYGON"))
-
-```
+- provide a switch to keep the MOP attribute per pressure in the impact map
+- provide a switch to keep the partial impact maps after combining with an individual pressure (in order to easily continue after errors with a particular pressure)
+- provide all GIS data as one Geopackage file instaed of the mess with shapefiles
