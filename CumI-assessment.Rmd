@@ -132,7 +132,7 @@ Unfortunately, also this function turns out to be quite slow ...
 If a recent version of QGIS is present (version 3.14.16 or newer), we therefor should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
 
 ```{r}
-# needs QGIS 3.14.16
+# needs QGIS 3.14.16 or newer
 library(qgisprocess)
 
 my_union <- function(a,b) {
@@ -579,8 +579,10 @@ if (! use_pre_calculated_data) {
 	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra mix"] <- "high"
 	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "infra sand"] <- "low"
 	biotopeLayer$sens[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa sand"] <- "low"
+	# additional fix for DK:
+	biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Denmark" & biotopeLayer$Biotope == "circa mix"] <- "low"
 	# changes for Sweden:
-	biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Sweden" & biotopeLayer$Sal2 == ">5"] <- "low"
+	biotopeLayer$s_surf[biotopeLayer$sens_spec == 0 & biotopeLayer$Territory == "Sweden" & biotopeLayer$Sal2 == "<5"] <- "low"
 }
 
 ```
@@ -865,7 +867,6 @@ cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construct
 
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-# (we need the namespace identifier in rename as otherwise plyr::rename is called)
 impact_map <- cumi_process_pressure(cable_c,"cable C","4B")
 
 
