@@ -1,8 +1,10 @@
 ---
-title: Assessment of the cumulative impact from physical pressures on the Baltic Sea using the CumI indicator
+title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2021-08-23
+date: 2022-08-31
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 # How to use this document
@@ -24,6 +26,17 @@ render("CumI-assessment.Rmd")
 
 If you do not want to evaluate the R code, but just render the document, use `knitr::opts_chunk$set(eval=FALSE)` before rendering.
 
+# General setup
+
+For the assessment for work with this script, all data files need to be present on your computer. The data are GIS files from various sources and they need to have specific file names and attribute table columns to work directly with this script. A folder "Data" comes together with this script and enables you to run the current assessment without changing the script, as long as the script is in the same directory as the 'Data' folder and the Data folder is filled witht the necessary data folders and fines:
+
+Set the directory of the data folder in the following code chunk.
+
+```{r setup}
+# --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
+myDir <- "/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/CumI-R/Data-2022"
+```
+
 # R packages to use
 The R code uses the following libraries which should be installed first (if not present):
 
@@ -36,7 +49,7 @@ library(dplyr)
 library(stringr) # using str_detect
 library(tibble)
 library(sf)
-
+# library(knitr) # already done above if needed
 ```
 
 # Some R functions
@@ -55,7 +68,7 @@ a2 <- st_polygon(list(rbind(c(45, 10), c(90,10), c(90, 90), c(45, 90), c(45, 10)
 b1 <- st_polygon(list(rbind(c(15, 5), c(75, 5), c(75, 50), c(15, 50), c(15, 5))))
 
 a <- st_sf(station=c(1, 2), geometry=st_sfc(a1, a2))
-b <- st_sf(type="A",   geometry=st_sfc(b1))
+b <- st_sf(type="A",	geometry=st_sfc(b1))
 
 st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
 st_agr(b) = "constant"
@@ -87,43 +100,43 @@ From this, we can make a union function that can work with arbitrary sf objects:
 library(plyr)
 
 my_union_sf <- function(a,b) {
-   #
-   # function doing a real GIS union operation such as in QGIS or ArcGIS
-   #
-   # a - the first sf
-   # b - the second sf
-   #
-   st_agr(a) = "constant"
-   st_agr(b) = "constant"
-   op1 <- st_difference(a,st_union(b))
-   op2 <- st_difference(b, st_union(a))
-   op3 <- st_intersection(b, a)
-   union <- rbind.fill(op1, op2, op3)
-   return(st_as_sf(union))
+	#
+	# function doing a real GIS union operation such as in QGIS or ArcGIS
+	#
+	# a - the first sf
+	# b - the second sf
+	#
+	st_agr(a) = "constant"
+	st_agr(b) = "constant"
+	op1 <- st_difference(a,st_union(b))
+	op2 <- st_difference(b, st_union(a))
+	op3 <- st_intersection(b, a)
+	union <- rbind.fill(op1, op2, op3)
+	return(st_as_sf(union))
 }
 ```
 
-Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some trnasforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
+Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some transforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
 
 ```{r eval=FALSE}
 library(sp) # used by 'raster'
 library(raster) # provides: raster::union()
 
 my_union_raster <- function(a,b,sf=TRUE) {
-   #
-   # function doing a real GIS union operation such as in QGIS or ArcGIS
-   # on Spatial* objects (from the sp library)
-   #
-   # a - the first sf or Spatial* object
-   # b - the second sf or Spatial* object
-   # sf - whehter or not to convert the output to an sf object
-   #
-   # when an objects is not a Spatial* object, it will be converted first
-   #
-   if (! class(a)[1] == "SpatialPolygonsDataFrame") {a <- as_Spatial(a)}
-   if (! class(b)[1] == "SpatialPolygonsDataFrame") {b <- as_Spatial(b)}
-   res <- raster::union(a,b)
-   if (sf) {return(as(res,"sf"))} else {return(res)}
+	#
+	# function doing a real GIS union operation such as in QGIS or ArcGIS
+	# on Spatial* objects (from the sp library)
+	#
+	# a - the first sf or Spatial* object
+	# b - the second sf or Spatial* object
+	# sf - whehter or not to convert the output to an sf object
+	#
+	# when an objects is not a Spatial* object, it will be converted first
+	#
+	if (! class(a)[1] == "SpatialPolygonsDataFrame") {a <- as_Spatial(a)}
+	if (! class(b)[1] == "SpatialPolygonsDataFrame") {b <- as_Spatial(b)}
+	res <- raster::union(a,b)
+	if (sf) {return(as(res,"sf"))} else {return(res)}
 }
 ```
 
@@ -133,24 +146,27 @@ If a recent version of QGIS is present (version 3.14.16 or newer), we therefor s
 
 ```{r}
 # needs QGIS 3.14.16 or newer
+# Installation:
+# install.packages("remotes")
+# remotes::install_github("paleolimbot/qgisprocess")
 library(qgisprocess)
 
 my_union <- function(a,b) {
-   st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
-   st_agr(b) = "constant"
-   result <- qgis_run_algorithm(
-      "native:union",
-	   INPUT = a,
-	   OVERLAY = b,
-	   OVERLAY_FIELDS_PREFIX = '')
+	st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
+	st_agr(b) = "constant"
+	result <- qgis_run_algorithm(
+		"native:union",
+		INPUT = a,
+		OVERLAY = b,
+		OVERLAY_FIELDS_PREFIX = '')
 	# read the resulting union, get rid of the produced "fid_" columns and make sure the geometry column is correctly named:
-   result <- sf::read_sf(qgis_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
-   # sometimes, the union results in some MULTILINESTRINGS - we must delete those:
-   if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
-   	cumi_message("... deleting MULTILINESTRINGs from last union ...")
-   	result <- result %>% filter(st_geometry_type() %in% c("POLYGON","MULTIPOLYGON"))
-   }
-   return(result)
+	result <- sf::read_sf(qgis_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
+	# sometimes, the union results in some MULTILINESTRINGS - we must delete those:
+	if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
+		cumi_message("... deleting MULTILINESTRINGs from last union ...")
+		result <- result %>% filter(st_geometry_type() %in% c("POLYGON","MULTIPOLYGON"))
+	}
+	return(result)
 }
 ```
 
@@ -186,23 +202,23 @@ print("--- CumI ---: defining CumI objects and functions ...")
 
 # the sensitivity matrix:
 cumi_sensi_matrix <- tribble(
-   ~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
-   "very low",  "high",              "high",          "moderate",           "moderate",
-   "low",       "high",              "moderate",      "moderate",           "low",
-   "moderate",  "moderate",          "moderate",      "low",                "very low",
-   "high",      "moderate",          "low",           "low",                "very low"
+	~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
+	"very low",  "high",				  "high",			 "moderate",			  "moderate",
+	"low",		 "high",				  "moderate",		"moderate",			  "low",
+	"moderate",  "moderate",			 "moderate",		"low",					 "very low",
+	"high",		"moderate",			 "low",			  "low",					 "very low"
 )
 
 
 # a function to retrieve the sensitivity:
 cumi_get_sensi <- function(resist,resil) {
-   #
-   # function returning the sensitivity given the resilience
-   # and the resistance as strings
-   #
-   # resist - the resistance as string
-   # resil - the resilience as string
-   #
+	#
+	# function returning the sensitivity given the resilience
+	# and the resistance as strings
+	#
+	# resist - the resistance as string
+	# resil - the resilience as string
+	#
 	resil <- paste("resilience_",gsub(" ", "", resil, fixed = TRUE),sep="")
 	result <- subset(cumi_sensi_matrix,resistance==resist)[[resil]]
 	if (is.null(result)) {
@@ -217,26 +233,26 @@ The second rule combines biotope sensitivity and the physical magnitude of press
 
 ```{r}
 cumi_impact_matrix <- tribble(
-   ~sensitivity, ~MOP_high, ~MOP_moderate, ~MOP_low,   ~MOP_verylow,
-   "high",       "high",    "high",        "m2",       "m1",
-   "moderate",   "high",    "m3",          "m1",       "low",
-   "low",        "m2",      "m1",          "low",      "very low",
-   "very low",   "m1",      "low",         "very low", "very low"
+	~sensitivity, ~MOP_high, ~MOP_moderate, ~MOP_low,	~MOP_verylow,
+	"high",		 "high",	 "high",		  "m2",		 "m1",
+	"moderate",	"high",	 "m3",			 "m1",		 "low",
+	"low",		  "m2",		"m1",			 "low",		"very low",
+	"very low",	"m1",		"low",			"very low", "very low"
 )
 
-     
+	  
 cumi_get_impact <- function(MOP,sensi) {
-   #
-   # function returning the impact given the MOP
-   # and the sensitivity as strings
-   #
-   # MOP - MOP category as string
-   # sensi - sensitivity category as string
-   #
-   if (is.na(MOP)) {return("none")}
-   if (is.na(sensi)) {return("none")}
-   if (MOP == "loss") {return("loss")}
-   MOP <- paste("MOP_",gsub(" ", "", MOP, fixed = TRUE),sep="")
+	#
+	# function returning the impact given the MOP
+	# and the sensitivity as strings
+	#
+	# MOP - MOP category as string
+	# sensi - sensitivity category as string
+	#
+	if (is.na(MOP)) {return("none")}
+	if (is.na(sensi)) {return("none")}
+	if (MOP == "loss") {return("loss")}
+	MOP <- paste("MOP_",gsub(" ", "", MOP, fixed = TRUE),sep="")
 	result <- subset(cumi_impact_matrix,sensitivity==sensi)[[MOP]]
 	if (is.null(result)) {
 		return('none')
@@ -252,13 +268,13 @@ The third rule combines two impacts when these are cumulated in the last step of
 ```{r}
 # the cumulation matrix:
 cumi_cumulation_matrix <- tribble(
-	~imp1,       ~imp2_high, ~imp2_m3, ~imp2_m2, ~imp2_m1, ~imp2_low, ~imp2_verylow,
-	"high",      "loss",     "loss",   "high",   "high",   "high",    "high",
-	"m3",        "loss",     "loss",   "high",   "m3",     "m3",      "m3",
-	"m2",        "high",     "high",   "m3",     "m2",     "m2",      "m2",
-	"m1",        "high",     "m3",     "m2",     "m2",     "m1",      "m1",
-	"low",       "high",     "m3",     "m2",     "m1",     "low",     "low",
-	"very low",  "high",     "m3",     "m2",     "m1",     "low",     "very low"
+	~imp1,		 ~imp2_high, ~imp2_m3, ~imp2_m2, ~imp2_m1, ~imp2_low, ~imp2_verylow,
+	"high",		"loss",	  "loss",	"high",	"high",	"high",	 "high",
+	"m3",		  "loss",	  "loss",	"high",	"m3",	  "m3",		"m3",
+	"m2",		  "high",	  "high",	"m3",	  "m2",	  "m2",		"m2",
+	"m1",		  "high",	  "m3",	  "m2",	  "m2",	  "m1",		"m1",
+	"low",		 "high",	  "m3",	  "m2",	  "m1",	  "low",	  "low",
+	"very low",  "high",	  "m3",	  "m2",	  "m1",	  "low",	  "very low"
 )
 
 # a function to retrieve the cumulative impact:
@@ -291,40 +307,40 @@ cumi_get_cumulation <- function(i1,i2) {
 
 Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. So, the number in a specific columns is always the radius of the outer border of a zone, not its width.
 
-The table also lists whether there is a buffer zone counting as 'loss' (~buffer_loss) and whether the pressure footprint itself (in case of polygone data) is treated as loss (~footprint\_as\_loss).
+The table also lists whether there is a buffer zone counting as 'loss' (~buffer\_loss) and whether the pressure footprint itself (in case of polygone data) is treated as loss (~footprint\_as\_loss).
 
 ```{r}
 #
 # buffer models for pressure intensity
 #
 # in the pressure column:
-#   C = under construction
-#   O = in operation
-#   M = maintenance
-#   CAP1, CAP2 = capital
-#   OWF = offshore wind farm
+#	C = under construction
+#	O = in operation
+#	M = maintenance
+#	CAP1, CAP2 = capital
+#	OWF = offshore wind farm
 #
 cumi_buffers <- tribble(
-   ~pressure,      ~description,                  ~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,   ~buffer_verylow,  ~footprint_as_loss,
-   #--------------|------------------------------|--------------|-------------|-----------------|--------------|------------------|------------------
-   "extraction",   "sand and gravel extraction",  0,             50,           100,              250,           500,                1,
-   "depositing",   "deposit of dredged material", 0,             50,           100,              250,           500,                0,
-   "dredging M",   "maintenance dredging",        0,             50,           100,              250,           500,                0,
-   "dredging CAP", "capital, areas",              0,              0,             0,                0,             0,                1,
-   "dredging CAP1","captial, points, <= 5000m3", 25,             25,            25,               25,            25,                1,
-   "dredging CAP2","capital, points, > 5000m3",  50,             50,            50,               50,            50,                1,
-   "cable C",      "cable",                       0,              0,           550,              600,          1000,                0,
-   "cable O",      "cable",                       1.5,            1.5,           1.5,              1.5,           1.5,              0,
-   "pipeline C",   "pipelines",                   0,              0,           550,              600,          1000,                0,
-   "pipeline O",   "pipelines",                  15,             15,            15,               90,           315,                0,
-   "platform C",   "platforms",                   0,              0,           550,              600,          1000,                0,
-   "platform O",   "platforms",                  25,             25,            25,               25,            25,                0,
-   "OWF C",        "offshore wind farms",         0,              0,           550,              600,          1000,                0,
-   "OWF O",        "offshore wind farms",        30,             30,            40,               50,           130,                0,
-   "coastalDef C", "coastal defence",             0,             50,           100,              250,           500,                0,
-   "coastalDef O", "coastal defense",            50,             50,            50,               50,            50,                0,
-   "mariculture",  "mariculture",               150,            150,           400,              650,          1150,                1,
-   "harbour O",    "harbour",                   200,              0,             0,                0,             0,                0
+	~pressure,		~description,						~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,	~buffer_verylow,  ~footprint_as_loss,
+	#--------------|------------------------------|--------------|-------------|-----------------|--------------|------------------|------------------
+	"extraction",	"sand and gravel extraction",  0,				 50,			  100,				  250,			  500,					 1,
+	"depositing",	"deposit of dredged material", 0,				 50,			  100,				  250,			  500,					 0,
+	"dredging M",	"maintenance dredging",		  0,				 50,			  100,				  250,			  500,					 0,
+	"dredging CAP", "capital, areas",				  0,				  0,				 0,					 0,				 0,					 1,
+	"dredging CAP1","captial, points, <= 5000m3", 25,				 25,				25,					25,				25,					 1,
+	"dredging CAP2","capital, points, > 5000m3",  50,				 50,				50,					50,				50,					 1,
+	"cable C",		"cable",							  0,				  0,			  550,				  600,			 1000,					 0,
+	"cable O",		"cable",							  1.5,				1.5,			  1.5,				  1.5,			  1.5,				  0,
+	"pipeline C",	"pipelines",						 0,				  0,			  550,				  600,			 1000,					 0,
+	"pipeline O",	"pipelines",						15,				 15,				15,					90,			  315,					 0,
+	"platform C",	"platforms",						 0,				  0,			  550,				  600,			 1000,					 0,
+	"platform O",	"platforms",						25,				 25,				25,					25,				25,					 0,
+	"OWF C",		  "offshore wind farms",			0,				  0,			  550,				  600,			 1000,					 0,
+	"OWF O",		  "offshore wind farms",		  30,				 30,				40,					50,			  130,					 0,
+	"coastalDef C", "coastal defence",				 0,				 50,			  100,				  250,			  500,					 0,
+	"coastalDef O", "coastal defense",				50,				 50,				50,					50,				50,					 0,
+	"mariculture",  "mariculture",					150,				150,			  400,				  650,			 1150,					 1,
+	"harbour O",	 "harbour",						 200,				  0,				 0,					 0,				 0,					 0
 )
 ```
 
@@ -339,84 +355,84 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	#
 	# pressureData - the sf objects holding the raw pressure data as points, lines or polygons
 	# pressureBufferModel - the symbolic name of the buffer model in the tribble 'cumi_buffer'
-	#   (column ~pressure)
+	# (column ~pressure)
 	#
 	
 	footprint <- filter(cumi_buffers,pressure==pressureBufferModel)[["footprint_as_loss"]]
 	loss <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_loss"]]
-	vl   <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_verylow"]]
-	l    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_low"]]
-	m    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
-	h    <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
+	vl	<- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_verylow"]]
+	l	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_low"]]
+	m	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
+	h	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
 	
 	# 'very low' zone:
 	if (vl-l > 0) {
-	   b_verylow <- st_buffer(pressureData,vl)
-	   b_low <- st_buffer(pressureData,l)
-	   zone_verylow <- st_sf(st_difference(st_union(b_verylow),st_union(b_low))) %>%
+		b_verylow <- st_buffer(pressureData,vl)
+		b_low <- st_buffer(pressureData,l)
+		zone_verylow <- st_sf(st_difference(st_union(b_verylow),st_union(b_low))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="very low") %>% rename_geometry("geometry")
-	   output <- zone_verylow
+		output <- zone_verylow
 	}
 	
 	# 'low' zone:
 	if (l-m > 0) {
-	   if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
-	   b_moderate <- st_buffer(pressureData,m)
-	   zone_low <- st_sf(st_difference(st_union(b_low),st_union(b_moderate))) %>%
+		if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
+		b_moderate <- st_buffer(pressureData,m)
+		zone_low <- st_sf(st_difference(st_union(b_low),st_union(b_moderate))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="low") %>% rename_geometry("geometry")
-	   if (exists("output")) {
+		if (exists("output")) {
 		  output <- add_row(output,zone_low)
-	   } else {
+		} else {
 		  output <- zone_low
-	   }
+		}
 	}
 	
 	# 'moderate' zone:
 	if (m-h > 0) {
-	   if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
-	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
-	   zone_moderate <- st_sf(st_difference(st_union(b_moderate),st_union(b_high))) %>%
+		if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
+		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
+		zone_moderate <- st_sf(st_difference(st_union(b_moderate),st_union(b_high))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="moderate") %>% rename_geometry("geometry")
-	   if (exists("output")) {
+		if (exists("output")) {
 		  output <- add_row(output,zone_moderate)
-	   } else {
+		} else {
 		  output <- zone_moderate
-	   }
+		}
 	}
 	
 	# 'high' zone:
 	if (h-loss > 0) {
-	   if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
-	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
-	   zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss))) %>%
+		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
+		if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+		zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="high") %>% rename_geometry("geometry")
-	   if (exists("output")) {
+		if (exists("output")) {
 		  output <- add_row(output,zone_high)
-	   } else {
+		} else {
 		  output <- zone_high
-	   }
+		}
 	}
 	
 	# 'loss' zone:
 	if (loss > 0) {
-	   if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
-	   zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
-	   if (exists("output")) {
+		if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+		zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
+		if (exists("output")) {
 		  output <- add_row(output,zone_loss)
-	   } else {
+		} else {
 		  output <- zone_loss
-	   }
+		}
 	}
 	
 	# footprint zone as 'loss':
 	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
-	   zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
-	   	st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
-	   if (exists("output")) {
+		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
+			st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
+		if (exists("output")) {
 		  output <- add_row(output,zone_footprint)
-	   } else {
+		} else {
 		  output <- zone_footprint
-	   }
+		}
 	}
 	
 	return(output)
@@ -428,33 +444,33 @@ In order to make the script a bit more concise, a function combining some standa
 
 ```{r}
 cumi_process_pressure <- function(pressureData,pressureType,suffix) {
-   #
-   # apply a buffer model to a GIS layer with pressures,
-   # clip at biotope layer boundary and combine with partial impact layer
-   #
-   # The function uses the global `impact_map` sf layer to add the pressure
-   # Therefor, the output of this function should be assigned to `imapct_map` again
-   #
-   # pressureData - sf layer with pressure data
-   # pressureType - layer type from tribble `cumi_buffers`, column ~pressure
-   # suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
-   #
-   # mapply() needed in mutate() function since mutate() operates on vectors and the cumi_get_impact() function not.
-   # Also, unname() needed in mutate() function since mapply() will return a named object and we only the vector inside.
-   # We need the namespace identifier in mutate() and select() as otherwise the plyr functions are called.
-   # Also note, from here on we typically need to repeatedly cast impact_map to MULTIPOLYGON as otherwise
-   #    we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
-   #    an issue)" which comes from the first st_difference() in my_union_sf()
-   #
-   intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
-   column <- paste("impact_",suffix,sep="")
-   cumi_message("... unioning ...")
-   result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-      my_union(intensity_layer) %>% 
-      dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
-      dplyr::select(-intensity) %>% filter(! is.na(Biotope))
-   cumi_message("Done!")
-   return(result)
+	#
+	# apply a buffer model to a GIS layer with pressures,
+	# clip at biotope layer boundary and combine with partial impact layer
+	#
+	# The function uses the global `impact_map` sf layer to add the pressure
+	# Therefor, the output of this function should be assigned to `imapct_map` again
+	#
+	# pressureData - sf layer with pressure data
+	# pressureType - layer type from tribble `cumi_buffers`, column ~pressure
+	# suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
+	#
+	# mapply() needed in mutate() function since mutate() operates on vectors and the cumi_get_impact() function not.
+	# Also, unname() needed in mutate() function since mapply() will return a named object and we only want the vector inside.
+	# We need the namespace identifier in mutate() and select() as otherwise the plyr functions are called.
+	# Also note, from here on we typically need to repeatedly cast impact_map to MULTIPOLYGON as otherwise
+	# we will get an error such as "Error in CPL_geos_op2(op, x, y) : attr classes has wrong size: please file
+	# an issue)" which comes from the first st_difference() in my_union_sf()
+	#
+	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
+	column <- paste("impact_",suffix,sep="")
+	cumi_message("... unioning ...")
+	result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
+		my_union(intensity_layer) %>% 
+		dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
+		dplyr::select(-intensity) %>% filter(! is.na(Biotope))
+	cumi_message("Done!")
+	return(result)
 }
 ```
 
@@ -477,14 +493,14 @@ get_running_time <- function(n1,n2) {
 }
 
 cumi_message <- function(msg) {
-   #
-   # print some nice, friendly message
-   #
-   # msg - text of the message to print
-   #
-   msg <- paste("--- CumI --- (", get_running_time(n1,Sys.time()),"): ",msg,sep="")
-   cat(paste(" ",msg," "," ",sep="\n"))
-   flush.console()
+	#
+	# print some nice, friendly message
+	#
+	# msg - text of the message to print
+	#
+	msg <- paste("--- CumI --- (now running for ", get_running_time(n1,Sys.time()),"): ",msg,sep="")
+	cat(paste(" ",msg," "," ",sep="\n"))
+	flush.console()
 }
 ```
 
@@ -506,20 +522,61 @@ coordSystem <- 3035
 #
 # You can choose to either use the pre-calculated data (set `use_pre_calculated_data` to `TRUE`) for the further process, or re-calculate it here (set it to `FALSE`).
 #
-use_pre_calculated_data <- TRUE
+use_pre_calculated_data <- FALSE
 
 ```
 
-For the assessment for work with this script, all data file need to be present on your computer. The data are GIS files from various sources and they need to have specific attribute table columns to work directly with this script. A folder "Data" comes together with this script and enables you to run the current assessment without changing the script, as long as the script is in the same directory as the 'Data' folder:
+
+## The assessment area
+The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
 
 ```{r}
-# go to the folder where I have the script and the 'Data' folder:
-# --> YOU CAN CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
-setwd("/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/CumI-R/")
+if (! use_pre_calculated_data) {
+	cumi_message("preparing assessment area layer ...")
+	area_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/_ags_HELCOM_subbasins_2022/HELCOM_subbasins_2022.shp")
+	areaLayer <- st_read(area_file) %>% dplyr::select(-c(Area_km2,Shape_Leng,Shape_Le_1,Shape_Area)) %>% st_make_valid()
+}
 ```
 
+To enable assigning data to specific countries, the assessment area is supplemented with country information. The countries are taken from the *EMODnet Human Actiities* data file `Emodnet_HA_OtherManagementsAreas_EEZ_20180629`. As the spatial coverage of the country data sometimes is smaller than the coverage of the assessment area, the country area was extended manually on the terrestrial side so the complete assessment area is within a specific country.
+
+```{r}
+# TODO: update available: EMODnet_HA_OtherManagementAreas_EEZ_v11_20210506
+# <https://www.emodnet-humanactivities.eu/search-results.php?dataname=Exclusive+Economic+Zone>
+if (! use_pre_calculated_data) {
+	cumi_message("loading and suplementing country information ...")
+	country_file <- file.path(myDir,"Biotopes/countries.shp")
+	countryLayer <- st_read(country_file)
+	areaCountryLayer <- st_intersection(areaLayer,countryLayer)
+}
+```
+
+
 ## The biotope map
-The current biotope map is a combination of all layers in the HELCOM database under [Biodiversity > Ecosystem components (BSII) > Broadscale habitats](https://maps.helcom.fi/website/mapservice/). These are 8 different habitat types. These were combined with the extent of some benthic species leading to a high sensitivity (Biodiversity > Ecosystem components (BSII) > Benthic species). The sensitivity is already included in this layer. The following steps were involved in this:
+The biotope map is based on the *Emodnet broad-scale seabed habitat map for Europe* (= EUSeapMap). In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
+
+```{r}
+if (! use_pre_calculated_data) {
+	biotopeBaltic_file <- file.path("/Users/Torsten/Marilim/GIS/EUSeaMap_2021/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
+	biotopeBalticLayer <- st_read(biotopeBaltic_file, layer="EUSeaMap_2021_Baltic") %>% st_transform(coordSystem)
+	# the following file was produced from the original EMODnet geodatabase in QGIS (version 3.26.1) by
+	# 1. converting it to geopackage
+	# 2. buffering by 0 metres (thus repairing geomerty errors)
+	# 3. manually dividing objects around the Kattegat boundary
+	# 4. deleting all objects outside the Kattegat
+	biotopeKattegat_file <- file.path("/Users/Torsten/Marilim/GIS/EUSeaMap_2021/EUSeaMap 2021 Arctic_Atlantic GDB/EUSeaMap_2021_Kattegat.gpkg")
+	biotopeKattegatLayer <- st_read(biotopeKattegat_file, layer="EUSeaMap_2021_Kattegat") %>% st_transform(coordSystem) %>% st_cast("MULTIPOLYGON")
+	# now merge the Baltic with the Kattegat:
+	biotopeBalticLayer <- biotopeBalticLayer %>% my_union(biotopeKattegatLayer)
+	# and add in the area and country information, essentially also clipping
+	# everything away that is outside the assessment area:
+	areaCountryBiotopeLayer <- st_intersection(biotopeBalticLayer,areaCountryLayer)
+}
+
+```
+
+
+a combination of all layers in the HELCOM database under [Biodiversity > Ecosystem components (BSII) > Broadscale habitats](https://maps.helcom.fi/website/mapservice/). These are 8 different habitat types. These were combined with the extent of some benthic species leading to a high sensitivity (Biodiversity > Ecosystem components (BSII) > Benthic species). The sensitivity is already included in this layer. The following steps were involved in this:
 
 - assign sensitivities to biotopes
 - apply "high" spatial sensitivity to regions with Mytilus, Zostera, Furcellaria, Fucus, Chara
@@ -597,9 +654,9 @@ if (! use_pre_calculated_data) {
 ```
 
 ## Pressure data and impact calculation
-The initial impact map is just the biotope layer. This impact map gets combined (in principe via a GIS union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_nx' where n is a number corresponding to the numbers in the following secions and x is either 'c' for 'under construction' or 'o' for 'in operation' or it is empty for those pressures which cannot be divided into these categories.
+The initial impact map is just the biotope layer. This impact map gets combined (in principle via a GIS union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_nx' where n is a number corresponding to the numbers in the following secions and x is either 'c' for 'under construction' or 'o' for 'in operation' or it is missing for those pressures which cannot be divided into these categories.
 
-The assessment period is: 2011–2016.
+The assessment period of the test runs was 2011–2016, the period for the current HOLAS III assessment done here is 2016–2021:
 
 ```{r}
 if (! use_pre_calculated_data) {
@@ -615,7 +672,14 @@ if (! use_pre_calculated_data) {
 cumi_message("processing trawling fishery ...")
 ```
 
-The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where all years have been combined into one GIS layer, the pressure has been smoothed from c-squares into an 1x1 km grid, the MOP has been calculated (column 'MOP_1') and the data have been combined with the above pre-calculated biotope map (including the changes in the sensitivities for DK and SE). *The next version of the script will also contain the necessary steps in R to make the preprocessing.*
+The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where:
+
+1. all years have been combined into one GIS layer
+2. the raw SAR data have been smoothed from c-squares into a 1x1 km grid using a mean SAR value per 1x1 km grid cell weighted by the area of the involved c-squares
+3. the MOP has been calculated (column 'MOP_1'; see script below)
+4. the data have been combined with the above pre-calculated biotope map (including the changes in the sensitivities for DK and SE)
+
+*The next version of the script will also contain the necessary steps in R to make the preprocessing.*
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
@@ -635,18 +699,18 @@ if (use_pre_calculated_data) {
 	
 	# treat SAR values lower than 0.05 as zero intensity:
 	for (myColumn in c('SURFSAR_11','SURFSAR_12','SURFSAR_13','SURFSAR_14','SURFSAR_15','SURFSAR_16')) {
-	   fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
+		fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
 	}
 	
 	# convert SAR into MOP:
 	fishing_x <- fishing_x %>% mutate(sar_avg = (SURFSAR_11 + SURFSAR_12 + SURFSAR_13 + SURFSAR_14 + SURFSAR_15 + SURFSAR_16)/6) %>%
-	   mutate(MOP = case_when(
-	   sar_avg == 0                     ~ 'none',
-	   sar_avg  > 0    & sar_avg < 0.33 ~ 'very low',
-	   sar_avg >= 0.33 & sar_avg < 0.66 ~ 'low',
-	   sar_avg >= 0.66 & sar_avg < 2    ~ 'moderate',
-	   sar_avg >= 2                     ~ 'high',
-	   TRUE                             ~ 'undefined'
+		mutate(MOP = case_when(
+		sar_avg == 0							~ 'none',
+		sar_avg  > 0	 & sar_avg < 0.33 ~ 'very low',
+		sar_avg >= 0.33 & sar_avg < 0.66 ~ 'low',
+		sar_avg >= 0.66 & sar_avg < 2	 ~ 'moderate',
+		sar_avg >= 2							~ 'high',
+		TRUE									  ~ 'undefined'
 	))
 	# we can now delete the columns we do not need in future
 	# and we can remove all polygons with no MOP
@@ -844,7 +908,7 @@ cumi_message("processing pipelines and cables ...")
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Pipelines](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/5260249e-5850-431a-b130-3a096abac852), last accessed 2021-08-13.
 
 
-There are no pipelines under construction in the dataset (attribute column 'Status'), thus only operational pipelines are included in the current assessment.
+These are polyline data. There are no pipelines under construction in the dataset (attribute column 'Status'), thus only operational pipelines are included in the current assessment.
 
 ```{r}
 cumi_message("... pipelines in operation (there are none under construction) ...")
@@ -858,6 +922,8 @@ impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","4A")
 
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Cables](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/c0e73e71-cafb-4422-a3a3-115687fd5c49), last accessed 2021-08-09.
+
+These are polyline data. The data is divided according to the status being 'Under construction' and 'Operational'.
 
 ```{r}
 cumi_message("... cables under construction ...")
@@ -889,7 +955,7 @@ cumi_message("processing platforms and wind farms ...")
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Oil platforms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/fddc27ec-b6ae-407b-9dd8-f31a42d75412), last accessed 2021-08-19.
 
-As we do not know from the data which kind of fundament the platforms have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss since platforms typically only have pylones and not the entire area of the platform is equivalent to lost habitat area. Further, as not explicitly stated in the metadata, the platforms as assumed to be "in operation".
+These are point data. As we do not know from the data which kind of fundament the platforms have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss since platforms typically only have pylones and not the entire area of the platform is equivalent to lost habitat area. Further, as not explicitly stated in the metadata, the platforms as assumed to be "in operation".
 
 ```{r}
 cumi_message("... oil platforms ...")
@@ -905,7 +971,7 @@ impact_map <- cumi_process_pressure(oil_x,"platform O","5A")
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Wind farms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/80de3bc3-e3ec-474e-8ae8-4b29c205eb0a), last accessed 2021-08-13.
 
 
-The 'Status' attribute lists some turbines 'Under construction' and some as 'Generating power'. The latter are taken as 'in operation'. Turbines with status 'Transformer' are not strictly turbines but transformer station. As there are only three of them in the dataset, they are also interpreted as being 'in operation' and treated as regular turbines. It can be considered to treat them differently in the future. According to ICES WKBEDLOSS, a radius of 15 m could be used for "offshore transformer stations or modules" (OTS/OTM).
+These are point data. The 'Status' attribute lists some turbines 'Under construction' and some as 'Generating power'. The latter are taken as 'in operation'. Turbines with status 'Transformer' are not strictly turbines but transformer station. As there are only three of them in the dataset, they are also interpreted as being 'in operation' and treated as regular turbines. It can be considered to treat them differently in the future. According to ICES WKBEDLOSS, a radius of 15 m could be used for "offshore transformer stations or modules" (OTS/OTM).
 
 As we do not know from the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss.
 
@@ -934,7 +1000,7 @@ cumi_message("processing coastal protection ...")
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/2d47c5ea-4590-465f-a462-60ef59d3d7d3), last accessed 2021-08-12.
 
-These are the interesting attributes in the data (description taken from HECLOM metadata page on this dataset):
+These are polyline data and the interesting attributes in the data are (description taken from HECLOM metadata page on this dataset):
 
 - Const\_year: Year of construction; for some structure in Estonia the construction year is not known and this is marked as no data (ND)
 - Estimated: Estimated date of completion if under construction (Estonia) or the year of environmental permit if year of construction is lacking (Finland)
@@ -958,7 +1024,7 @@ impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C","6A")
 cumi_message("... coastal protection in operation ...")
 # take the features where Const_year is null or is a 4-digit year or is 'ND':
 coastalDef_o <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% 
-	   filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
+		filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
 
 # In this case, MOP is the same as intensity as frequency does not apply:
 impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O","6B")
@@ -987,7 +1053,7 @@ cumi_message("processing shipping ...")
 
 Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Shipping density 2011-2015](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/1fd5298f-d3be-4c5f-bb05-3dc66a8eea6b), last accessed 2021-08-20.
 
-This script uses a pre-processed version of the HELCOM dataset. *The next version of this script will include the pre-processing prodedure in R*. These step were involved in order to arrive at the data layer used here:
+The dataset contains polygon data. This script uses a pre-processed version of the HELCOM dataset. *The next version of this script will include the pre-processing prodedure in R*. These step were involved in order to arrive at the data layer used here:
 
 1. use the layer "2011-2015_all_ship_types_MEAN/2011-2015_all_ship_types_MEAN.tif" from the above HELCOM dataset
 2. vectorise the data and assign coordinate system EPSG:3035 (the raster value is put into an attribute column named 'density')
@@ -1018,7 +1084,7 @@ END
 # depthzone 2: equiv. to  50 % => density value divided by 2
 # depthzone 3: equiv. to  25 % => density value divided by 4
 # depthzone 4: equiv. to  10 % => density value divided by 10
-# depthzone 5: equiv. to   0 % => polygon is removed (everything over 25 m)
+# depthzone 5: equiv. to	0 % => polygon is removed (everything over 25 m)
 
 # new attribute column 'intensity':
 CASE
@@ -1034,7 +1100,7 @@ END
 ```{QGIS eval=FALSE}
 # new attribute column 'MOP':
 CASE
-when "intensity" >=     0 and "intensity" <   8041 then 'very low'
+when "intensity" >=	  0 and "intensity" <	8041 then 'very low'
 when "intensity" >=  8041 and "intensity" <  16083 then 'low'
 when "intensity" >= 16083 and "intensity" <  24124 then 'moderate'
 when "intensity" >= 24124 and "intensity" <= 32166 then 'high'
@@ -1058,11 +1124,11 @@ shipping_x <- st_read(shipping_file) %>% st_make_valid()
 # as this will cut down the processing time from approx. 8 hours to under a minute ...
 #
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-   my_union(shipping_x) %>% 
-   dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
-   dplyr::select(-c(MOP)) %>%
-   rename_geometry("geometry") %>%
-   filter(! is.na(Biotope))
+	my_union(shipping_x) %>% 
+	dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
+	dplyr::select(-c(MOP)) %>%
+	rename_geometry("geometry") %>%
+	filter(! is.na(Biotope))
 ```
 
 
@@ -1122,6 +1188,44 @@ st_write(impact_map_disturbance,paste("Data/Results/CumI-assessment-",format(Sys
 st_write(impact_map_loss,paste("Data/Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".shp",sep= ""))
 ```
 
+The resulting CumI-assessment file has a number of columns now. This is what they mean:
+
+- Biotope = HELCOM broadscale habitat
+- sens = general pressure-independant sensitivity
+- s_surf = sensitivity against surface abrasion due to bottom trawling
+- s_subsurf = sensitivity against subsurface penetration due to bottom trawling (not used in this assessment)
+- sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
+- level_2 = HELCOM subbasins 2018 (assessment units)
+- Territory = country name
+- Sal = bottom salinity class (from HELCOM BALANCE project)
+- Sal2 = bottom salinity value range (from HELCOM BALANCE project)
+- impact_xx = CumI impact category for the component specified by 'xx':
+	- 1: Bottom trawling fishery (surface abrasion), rastered data
+	- 2A: Finfish mariculture, point data
+	- 2B: Shellfish mariculture, point data
+	- 2C: Shellfish mariculture, polygon data
+	- 3A: Extraction of sand and gravel, polygon data
+	- 3B: Deposit of dredged material, polygon data
+	- 3C: Deposit of dredged material, point data
+	- 3D: Capital dredging, polygon data
+	- 3E: Maintenance dredging, polygon data
+	- 3F: Capital dredging above 5000m3, point data
+	- 3G: Capital dredging below or equal 5000m3, point data
+	- 3H: Maintenance dredging, point data
+	- 4A: Pipelines in operation, polyline data
+	- 4B: Cables under construction, polyline data
+	- 4C: Cables in operation, polyline data
+	- 5A: Oil platforms, point data
+	- 5B: OWF under construction, point data
+	- 5C: OWF in operation, point data
+	- 6A: Coastal protection under construction, polyline data
+	- 6B: Coastal protection in operation, polyline data
+	- 6C: Harbours, polygon data
+	- 7: Shipping, polygon data
+- cumi: the final cumulative impact category
+	
+	
+
 # Outlook
 This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
 
@@ -1134,3 +1238,7 @@ Apart from this, the following updates are planned for the next version:
 - provide a switch to keep the MOP attribute per pressure in the impact map
 - provide a switch to keep the partial impact maps after combining with an individual pressure (in order to easily continue after errors with a particular pressure)
 - provide all GIS data as one Geopackage file instaed of the mess with shapefiles
+
+[^1]: <https://www.emodnet-seabedhabitats.eu/files/C20211007_EUSeaMap_2021_Baltic_Sea.zip>
+[^2]: <https://www.emodnet-seabedhabitats.eu/files/C20211008_EUSeaMap_2021_Arctic_Atlantic.zip>
+[^3]: <https://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/d4b6296c-fd19-462c-94d2-4c81b9313d77>
