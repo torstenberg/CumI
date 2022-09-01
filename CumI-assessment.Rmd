@@ -46,10 +46,10 @@ print(paste("--- CumI ---: starting at",n1,sep=" "))
 print("--- CumI ---: loading libraries ...")
 library(dplyr)
 # library(naniar)
-library(stringr) # using str_detect
+library(stringr) # using str_detect() and word()
 library(tibble)
 library(sf)
-library(rgdal) # for species raster data
+library(terra) # for species raster data
 # library(knitr) # already done above if needed
 ```
 
@@ -171,7 +171,18 @@ my_union <- function(a,b) {
 }
 ```
 
-If you can't use QGIS, you will need to rename one of the first two union functions to `my_union` (and rename the QGIS function to something else) and live with a very poor performance, meaning to wait hours and hours for some GIS union processing (I don't even know how long it takes because I always stopped the execution after 1–2 hours).
+After an initial and not comprehensive test, it seems that the union function in the new terr package is even faster than using a QGIS process for smaller files:
+
+```{r eval=FALSE}
+my_union <- function(a,b) {
+	if (! class(a)[1] == "spatVector") {a <- vect(a)}
+	if (! class(b)[1] == "spatVector") {b <- vect(b)}
+	result <- terra::union(a,b)
+	return(result)
+}
+```
+
+If you can't use QGIS or terra, you will need to rename one of the first two union functions to `my_union` (and rename the QGIS/terra function to something else) and live with a very poor performance, meaning to wait hours and hours for some GIS union processing (I don't even know how long it takes because I always stopped the execution after 1–2 hours).
 
 
 Sometimes, we need to rename the geometry column of an sf object, since sf itself will give it some weird names:
@@ -203,11 +214,11 @@ print("--- CumI ---: defining CumI objects and functions ...")
 
 # the sensitivity matrix:
 cumi_sensi_matrix <- tribble(
-	~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
-	"very low",  "high",				  "high",			 "moderate",			  "moderate",
-	"low",		 "high",				  "moderate",		"moderate",			  "low",
-	"moderate",  "moderate",			 "moderate",		"low",					 "very low",
-	"high",		"moderate",			 "low",			  "low",					 "very low"
+    ~resistance, ~resilience_verylow, ~resilience_low, ~resilience_moderate, ~resilience_high,
+    "very low",  "high",              "high",          "moderate",           "moderate",
+    "low",       "high",              "moderate",      "moderate",           "low",
+    "moderate",  "moderate",          "moderate",      "low",                "very low",
+    "high",      "moderate",          "low",           "low",                "very low"
 )
 
 
@@ -527,6 +538,12 @@ use_pre_calculated_data <- FALSE
 
 ```
 
+The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
+
+```{r}
+cumi_categories <- c("very low","low","moderate","high")
+```
+
 
 ## The assessment area
 The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
@@ -554,10 +571,14 @@ if (! use_pre_calculated_data) {
 
 
 ## The biotope map
-The biotope map is based on the *Emodnet broad-scale seabed habitat map for Europe* (= EUSeapMap). In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
+The biotope map is based on the *Emodnet broad-scale seabed habitat map for Europe* (= EUSeapMap).
+
+### Biotope, country and assessment area data
+In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
 
 ```{r}
 if (! use_pre_calculated_data) {
+	cumi_message("starting with EMODnet biotopes ...")
 	biotopeBaltic_file <- file.path("/Users/Torsten/Marilim/GIS/EUSeaMap_2021/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
 	biotopeBalticLayer <- st_read(biotopeBaltic_file, layer="EUSeaMap_2021_Baltic") %>%
 		st_transform(coordSystem) %>%
@@ -587,6 +608,7 @@ if (! use_pre_calculated_data) {
 	# everything away that is outside the assessment area:
 	# (Note: this may also clip away parts of the assessment area when there is no biotope
 	# information there, but as we cannot use those parts without biotope information anyway, this is ok)
+	cumi_message("integrating area and country information ...")
 	areaCountryBiotopeLayer <- st_intersection(biotopeBalticLayer,areaCountryLayer)
 	# only retain the columns we need:
 	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>%
@@ -598,414 +620,591 @@ if (! use_pre_calculated_data) {
 }
 ```
 
+### Species data
 Some taxa inhabiting specific areas lead to a 'high' sensitivity towards the pressures in the later process. The spatial data for these taxa is taken from HELCOM MADS (Biodiversity > Ecosystem components (BSII) > Benthic species). The taxa are the genera *Mytilus, Zostera, Furcellaria, Fucus, Chara*. We include this information into the biotope map in a new column 'sens_spec':
 
 
 ```{r}
-cumi_message("including information of sensitive species ...")
+if (! use_pre_calculated_data) {
+	cumi_message("including information on sensitive species ...")
 
-species_folder <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS II/Benthic species")
+	species_folder <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS II/Benthic species")
 
-# this new column will hold all the species information later:
-areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
+	# this new column will hold all the species information later:
+	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
 
-for(myfile in c(
+	for(myfile in c(
 		"Chara_distribution.tif",
 		"Fucus_distribution_2018.tif",
 		"Furcellaria_distribution.tif",
 		"Mytilus_distribution.tif",
 		"Zostera_marina_distribution_2018.tif"
-)) {
-	cumi_message("... ")
-	cumi_message(myfile)
-	# terra # mydata <- rast(file.path(species_folder,myfile))
-	mydata <- readGDAL(file.path(species_folder,myfile))
-	# convert to vector data:
-	# only cells with band1 = 1 have the species, so we discard the rest:
-	# terra # mydata_poly <- terra::as.polygons(zos, dissolve=FALSE)
-	spdf <- as(mydata,'SpatialPolygonsDataFrame') %>% subset(band1 == 1)
-	sf_data <- st_as_sf(spdf)
-	myShort <- substring(myfile,1,5)
-	myName <- case_when(
-		myShort == "Chara" ~ "Chara",
-		myShort == "Fucus" ~ "Fucus",
-		myShort == "Furce" ~ "Furcellaria",
-		myShort == "Mytil" ~ "Mytilus",
-		myShort == "Zoste" ~ "Zostera",
-		TRUE ~ "undefined"
-	)
-	# for Zostera, ignore any vegetation below 10m depth:
-	library(terra)
-	depths <- rast("/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/Daten/HELCOM-Daten/Depthreliefmap/depth/w001001.adf")
-	# terra # tmp_t <- terra::extract(depths,mydata_poly, 'mean')
-	tmp_t <- terra::extract(depths,vect(sf_data), 'mean')
-	# terra # tmp_t <- cbind(mydata_poly,tmp_t) st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
-	sf_data <- cbind(sf_data,tmp_t) %>% filter(w001001 < -10)
-	# dissolve and add species information:
-	sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
-	# now include the data into the biotope map:
-	areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
-	areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
-	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
-	# remove all features without biotope, they are outside the assessment area:
-	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
+	)) {
+		myShort <- substring(myfile,1,5)
+		cumi_message(paste("... ", myfile, sep=""))
+		mydata <- rast(file.path(species_folder,myfile))
+		# convert to vector data:
+		mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
+		# only cells with band1 = 1 have the species, so we discard the rest:
+		names(mydata_poly)[1] <- "present"
+		mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
+		myName <- case_when(
+			myShort == "Chara" ~ "Chara",
+			myShort == "Fucus" ~ "Fucus",
+			myShort == "Furce" ~ "Furcellaria",
+			myShort == "Mytil" ~ "Mytilus",
+			myShort == "Zoste" ~ "Zostera",
+			TRUE ~ "undefined"
+		)
+		# for Zostera, ignore any vegetation below 10m depth:
+		if (myShort == "Zoste") {
+			depths <- rast("/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/Daten/HELCOM-Daten/Depthreliefmap/depth/w001001.adf")
+			tmp <- terra::extract(depths,mydata_poly, 'mean')
+			sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
+		} else  {
+			sf_data <- st_as_sf(mydata_poly)
+		}
+		# dissolve and add species information:
+		sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
+		# now include the data into the biotope map:
+		areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
+		areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
+		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
+		# remove all features without biotope, they are outside the assessment area:
+		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
+	}
 }
 ```
 
 Note, the name of the taxon in the column 'sens_spec' may have been overridden one or more times when the taxa distribution overlaps spatially. So, do not count on the name of the taxon being the only one responsible for the entry.
 
+### Salinity data
 Now, we have an initial biotope layer with the corresponding information on subbasin and country. The next step is to include data on the bottom salinity so we have all information needed to assign sensitivity values to the habitat. For this, we assign the bottom salinity from the HELCOM BALANCE project:
 
 ```{r}
-# we use the original data, just converted from raster to vector form:
-salinity_file <- file.path(myDir,"../../Daten/HELCOM-Daten/BALANCE Modelledbottomsalinity/Bottomsalinity-vektorisiert.shp")
-salinityLayer <- st_read(salinity_file) %>% st_transform(coordSystem) %>% dplyr::select(-DN) %>% st_buffer(0)
-
-areaCountryBiotopeSalinityLayer <- my_union(areaCountryBiotopeLayer,salinityLayer)
-# Now some cleaning:
-# 1. delete all polygons without biotope assignment (these are the ones from the salinity layer that lie beyond the biotope map)
-# x. only retain the attributes we want:
-areaCountryBiotopeSalinityLayer <- areaCountryBiotopeSalinityLayer %>%
-	filter(! is.na(Biotope)) %>%
+if (! use_pre_calculated_data) {
+		cumi_message("integrating salinity data ...")
+	salinity_file <- file.path(myDir,"Salinity/BALANCE_BOTTOM_SALINITY.tif")
+	salinityLayer <- rast(salinity_file)
+	# convert to vector data:
+	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
+	names(salinityLayer)[1] <- "category"
+	salinityLayer <- st_as_sf(salinityLayer) %>% mutate(Sal = 'none') %>% mutate(Sal2 = 'none')
 	
-
-```
-
-In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-xx, supplemented by values used in the subsequent CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of errornous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. If the combination was not used, the same values were used as for the adjacent salinity class. Values for 's_surf' not yet assigned but necessary due to the new biotope map are marked `# assumed` in the following code.
-
-
-```{r}
-tmp <- areaCountryBiotopeSalinityLayer
-
-# new columns 'sens' and 's_surf':
-tmp <- tmp %>% mutate(sens = 'none') %>% mutate(s_surf = 'none')
-
-# template for selection of value based on largest area (data from 'CumI-assessment-2021-08-23T2157.gpkg'):
-# select sum(area) as area, '"' || Territory || '", "' || Biotope || '", "' || Sal2 || '", "' || s_surf || '",'
-# as line from cumi
-# group by Biotope,s_surf,Sal2
-# order by Territory,biotope,Sal2
-#
-
-cumi_Sensitivities <- tribble(
-	~Territory, ~Biotope,    ~Sal2,   ~sens,         ~s_surf,
-	# --------------------------------------------------------
-	"Denmark", "circa hard", "7.5-11", "high",        "high",
-	"Denmark", "circa hard", "11-18", "high",         "high",
-	"Denmark", "circa hard", "18-30", "high",         "high",
+	for (i in 1:nrow(salinityLayer)) {
+		cat <- salinityLayer$category[i]
+		salinityLayer$Sal[i] <- case_when(
+			cat == "1" ~ "Oligohaline I",
+			cat == "2" ~ "Oligohaline II",
+			cat == "3" ~ "Mesohaline I",
+			cat == "4" ~ "Mesohaline II",
+			cat == "5" ~ "Polyhaline",
+			cat == "6" ~ "Euhaline"
+		)
+		salinityLayer$Sal2[i] <- case_when(
+			cat == "1" ~ "< 5",
+			cat == "2" ~ "5-7.5",
+			cat == "3" ~ "7.5-11",
+			cat == "4" ~ "11-18",
+			cat == "5" ~ "18-30",
+			cat == "6" ~ "> 30"
+		)
+	}
 	
-	"Denmark", "circa mix", "7.5-11", "high",         "low",
-	"Denmark", "circa mix", "11-18", "high",          "low",
-	"Denmark", "circa mix", "18-30", "high",          "low",
-	"Denmark", "circa mix", ">30", "high",            "low",
+	salinityLayer <- select(salinityLayer,-category)
 	
-	"Denmark", "circa mud", "7.5-11", "moderate",     "moderate",
-	"Denmark", "circa mud", "11-18", "moderate",      "moderate",
-	"Denmark", "circa mud", "18-30", "moderate",      "high",
-	"Denmark", "circa mud", ">30", "moderate",        "high",
-	
-	"Denmark", "circa sand", "7.5-11", "low",         "moderate",
-	"Denmark", "circa sand", "11-18", "low",          "moderate",
-	"Denmark", "circa sand", "18-30", "low",          "high",
-	"Denmark", "circa sand", ">30", "low",            "high",
-	
-	"Denmark", "infra hard", "7.5-11", "high",        "high",
-	"Denmark", "infra hard", "11-18", "high",         "high",
-	"Denmark", "infra hard", "18-30", "high",         "high",
-	"Denmark", "infra hard", ">30", "high",           "high",
-	
-	"Denmark", "infra mix", "7.5-11", "high",         "low",
-	"Denmark", "infra mix", "11-18", "high",          "low",
-	"Denmark", "infra mix", "18-30", "high",          "high",
-	"Denmark", "infra mix", ">30", "high",            "high",
-	
-	"Denmark", "infra mud", "7.5-11", "moderate",     "moderate",
-	"Denmark", "infra mud", "11-18", "moderate",      "moderate",
-	"Denmark", "infra mud", "18-30", "moderate",      "high",
-	"Denmark", "infra mud", ">30", "moderate",        "high",
-	
-	"Denmark", "infra sand", "7.5-11", "low",         "moderate",
-	"Denmark", "infra sand", "11-18", "low",          "moderate", # s_surf assumed
-	"Denmark", "infra sand", "18-30", "low",          "high",
-	"Denmark", "infra sand", ">30", "low",            "high",
-	# --------------------------------------------------------
-	"Estonia", "circa hard", "5-7", "high",           "high",
-	"Estonia", "circa hard", "7.5-11", "high",        "high",
-	
-	"Estonia", "circa mix", "5-7", "moderate",        "high",
-	"Estonia", "circa mix", "7.5-11", "moderate",     "low",
-	
-	"Estonia", "circa mud", "5-7", "moderate",        "moderate",
-	"Estonia", "circa mud", "7.5-11", "moderate",     "moderate",
-	
-	"Estonia", "circa sand", "5-7", "moderate",       "moderate",
-	"Estonia", "circa sand", "7.5-11", "moderate",    "moderate",
-	
-	"Estonia", "infra hard", "5-7", "high",           "high",
-	"Estonia", "infra hard", "7.5-11", "high",        "high",
-	
-	"Estonia", "infra mix", "5-7", "moderate",        "moderate", # s_surf assumed
-	"Estonia", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
-	
-	"Estonia", "infra mud", "5-7", "moderate",        "moderate",
-	"Estonia", "infra mud", "7.5-11", "moderate",     "moderate",
-	
-	"Estonia", "infra sand", "5-7", "moderate",       "moderate",
-	"Estonia", "infra sand", "7.5-11", "moderate",    "moderate",
-	# --------------------------------------------------------
-	"Finland", "circa hard", "<5", "high",            "high",
-	"Finland", "circa hard", "5-7", "high",           "high",
-	"Finland", "circa hard", "7.5-11", "high",        "high", # s_surf assumed
-	
-	"Finland", "circa mix", "<5", "moderate",         "moderate",
-	"Finland", "circa mix", "5-7", "moderate",        "moderate",
-	"Finland", "circa mix", "7.5-11", "moderate",     "moderate",
-	
-	"Finland", "circa mud", "<5", "moderate",         "moderate",
-	"Finland", "circa mud", "5-7", "moderate",        "moderate",
-	"Finland", "circa mud", "7.5-11", "moderate",     "moderate",
-	
-	"Finland", "circa sand", "<5", "moderate",        "moderate",
-	"Finland", "circa sand", "5-7", "moderate",       "moderate",
-	"Finland", "circa sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
-	
-	"Finland", "infra hard", "<5", "high",            "high",
-	"Finland", "infra hard", "5-7", "high",           "high",
-	"Finland", "infra hard", "7.5-11", "high",        "high", # s_surf assumed
-	
-	"Finland", "infra mix", "<5", "moderate",         "moderate",
-	"Finland", "infra mix", "5-7", "moderate",        "moderate",
-	"Finland", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
-	
-	"Finland", "infra mud", "<5", "moderate",         "moderate",
-	"Finland", "infra mud", "5-7", "moderate",        "moderate",
-	"Finland", "infra mud", "7.5-11", "moderate",     "moderate",
-	
-	"Finland", "infra sand", "<5", "moderate",        "moderate",
-	"Finland", "infra sand", "5-7", "moderate",       "moderate",
-	"Finland", "infra sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
-	# --------------------------------------------------------
-	"Germany", "circa hard", "5-7", "high",           "high",
-	"Germany", "circa hard", "7.5-11", "high",        "high",
-	"Germany", "circa hard", "11-18", "high",         "high",
-	"Germany", "circa hard", "18-30", "high",         "high",
-	
-	"Germany", "circa mix", "5-7", "moderate",        "low", # s_surf assumed
-	"Germany", "circa mix", "7.5-11", "moderate",     "low",
-	"Germany", "circa mix", "11-18", "moderate",      "high",
-	"Germany", "circa mix", "18-30", "moderate",      "high",
-	
-	"Germany", "circa mud", "5-7", "moderate",        "moderate", # s_surf assumed
-	"Germany", "circa mud", "7.5-11", "moderate",     "moderate",
-	"Germany", "circa mud", "11-18", "moderate",      "high",
-	"Germany", "circa mud", "18-30", "moderate",      "high",
-	
-	"Germany", "circa sand", "5-7", "moderate",       "moderate",
-	"Germany", "circa sand", "7.5-11", "moderate",    "moderate",
-	"Germany", "circa sand", "11-18", "moderate",     "moderate",
-	"Germany", "circa sand", "18-30", "moderate",     "moderate",
-	
-	"Germany", "infra hard", "5-7", "high",           "high",
-	"Germany", "infra hard", "7.5-11", "high",        "high",
-	"Germany", "infra hard", "11-18", "high",         "high",
-	"Germany", "infra hard", "18-30", "high",         "high",
-	
-	"Germany", "infra mix", "5-7", "moderate",        "moderate",
-	"Germany", "infra mix", "7.5-11", "moderate",     "low",
-	"Germany", "infra mix", "11-18", "moderate",      "low",
-	"Germany", "infra mix", "18-30", "moderate",      "high",
-	
-	"Germany", "infra mud", "5-7", "moderate",        "moderate",
-	"Germany", "infra mud", "7.5-11", "moderate",     "moderate",
-	"Germany", "infra mud", "11-18", "moderate",      "moderate",
-	"Germany", "infra mud", "18-30", "moderate",      "high",
-	
-	"Germany", "infra sand", "5-7", "moderate",       "moderate",
-	"Germany", "infra sand", "7.5-11", "moderate",    "moderate",
-	"Germany", "infra sand", "11-18", "moderate",     "high",
-	"Germany", "infra sand", "18-30", "moderate",     "high",
-	# --------------------------------------------------------
-	"Latvia", "circa hard", "5-7", "high",            "high",
-	"Latvia", "circa hard", "7.5-11", "high",         "high",
-	"Latvia", "circa hard", "11-18", "high",          "high", # s_surf assumed
-	
-	"Latvia", "circa mix", "5-7", "moderate",         "low",
-	"Latvia", "circa mix", "7.5-11", "moderate",      "low",
-	"Latvia", "circa mix", "11-18", "moderate",       "low",
-	
-	"Latvia", "circa mud", "<5", "moderate",          "moderate",
-	"Latvia", "circa mud", "5-7", "moderate",         "moderate",
-	"Latvia", "circa mud", "7.5-11", "moderate",      "moderate",
-	"Latvia", "circa mud", "11-18", "moderate",       "moderate",
-	
-	"Latvia", "circa sand", "<5", "moderate",         "moderate",
-	"Latvia", "circa sand", "5-7", "moderate",        "moderate",
-	"Latvia", "circa sand", "7.5-11", "moderate",     "moderate",
-	"Latvia", "circa sand", "11-18", "moderate",      "moderate", # s_surf assumed
-	
-	"Latvia", "infra hard", "<5", "high",             "high",
-	"Latvia", "infra hard", "5-7", "high",            "high",
-	"Latvia", "infra hard", "7.5-11", "high",         "high", # s_surf assumed
-	"Latvia", "infra hard", "11-18", "high",          "high", # s_surf assumed
-	
-	"Latvia", "infra mix", "<5", "moderate",          "moderate", # s_surf assumed
-	"Latvia", "infra mix", "5-7", "moderate",         "moderate",
-	"Latvia", "infra mix", "7.5-11", "moderate",      "moderate", # s_surf assumed
-	"Latvia", "infra mix", "11-18", "moderate",       "moderate", # s_surf assumed
-	
-	"Latvia", "infra mud", "<5", "moderate",          "moderate",
-	"Latvia", "infra mud", "5-7", "moderate",         "mmoderate",
-	"Latvia", "infra mud", "7.5-11", "moderate",      "moderate",
-	"Latvia", "infra mud", "11-18", "moderate",       "moderate", # s_surf assumed
-	
-	"Latvia", "infra sand", "<5", "moderate",         "moderate",
-	"Latvia", "infra sand", "5-7", "moderate",        "moderate",
-	"Latvia", "infra sand", "7.5-11", "moderate",     "moderate", # s_surf assumed
-	"Latvia", "infra sand", "11-18", "moderate",      "moderate", # s_surf assumed
-	# --------------------------------------------------------
-	"Lithuania", "circa hard", "5-7", "high",         "high",
-	"Lithuania", "circa hard", "7.5-11", "high",      "high",
-	
-	"Lithuania", "circa mix", "5-7", "moderate",      "low",
-	"Lithuania", "circa mix", "7.5-11", "moderate",   "low",
-	"Lithuania", "circa mix", "11-18", "moderate",    "low", # s_surf assumed
-	
-	"Lithuania", "circa mud", "5-7", "moderate",      "moderate",
-	"Lithuania", "circa mud", "7.5-11", "moderate",   "moderate",
-	
-	"Lithuania", "circa sand", "<5", "moderate",      "moderate", # s_surf assumed
-	"Lithuania", "circa sand", "5-7", "moderate",     "moderate",
-	"Lithuania", "circa sand", "7.5-11", "moderate",  "moderate",
-	
-	"Lithuania", "infra hard", "<5", "high",          "high", # both assumed (sens and s_surf)
-	"Lithuania", "infra hard", "5-7", "high",         "high", # both assumed
-	"Lithuania", "infra hard", "7.5-11", "high",      "high", # both assumed
-	
-	"Lithuania", "infra mix", "5-7", "moderate",      "moderate",
-	"Lithuania", "infra mix", "7.5-11", "moderate",   "moderate", # s_surf assumed
-	
-	"Lithuania", "infra mud", "5-7", "moderate",      "moderate",
-	"Lithuania", "infra mud", "7.5-11", "moderate",   "moderate", # s_surf assumed
-	
-	"Lithuania", "infra sand", "5-7", "moderate",     "moderate",
-	"Lithuania", "infra sand", "7.5-11", "moderate",  "moderate", # s_surf assumed
-	# --------------------------------------------------------
-	"Poland", "circa hard", "5-7", "high",            "high",
-	"Poland", "circa hard", "7.5-11", "high",         "high",
-	"Poland", "circa hard", "11-18", "high",          "high", # s_surf assumed
-	
-	"Poland", "circa mix", "5-7", "moderate",         "moderate", # s_surf assumed
-	"Poland", "circa mix", "7.5-11", "moderate",      "moderate",
-	"Poland", "circa mix", "11-18", "moderate",       "moderate", # s_surf assumed
-	
-	"Poland", "circa mud", "5-7", "moderate",         "moderate",
-	"Poland", "circa mud", "7.5-11", "moderate",      "moderate",
-	"Poland", "circa mud", "11-18", "moderate",       "moderate",
-	
-	"Poland", "circa sand", "5-7", "moderate",        "moderate",
-	"Poland", "circa sand", "7.5-11", "moderate",     "moderate",
-	"Poland", "circa sand", "11-18", "moderate",      "moderate",
-	
-	"Poland", "infra hard", "5-7", "high",            "high",
-	"Poland", "infra hard", "7.5-11", "high",         "high",
-	"Poland", "infra hard", "11-18", "high",          "high",
-	
-	"Poland", "infra mix", "<5", "moderate",          "moderate", # sens assumed
-	"Poland", "infra mix", "5-7", "moderate",         "moderate",
-	"Poland", "infra mix", "7.5-11", "moderate",      "moderate",
-	
-	"Poland", "infra mud", "<5", "moderate",          "moderate", # sens assumed
-	"Poland", "infra mud", "5-7", "moderate",         "moderate",
-	"Poland", "infra mud", "7.5-11", "moderate",      "moderate",
-	"Poland", "infra mud", "11-18", "moderate",       "moderate",
-	
-	"Poland", "infra sand", "<5", "moderate",         "moderate", # sens assumed
-	"Poland", "infra sand", "5-7", "moderate",        "moderate",
-	"Poland", "infra sand", "7.5-11", "moderate",     "moderate",
-	"Poland", "infra sand", "11-18", "moderate",      "moderate", # s_surf assumed
-	# --------------------------------------------------------
-	"Russia", "circa mix", "5-7", "moderate",         "moderate",
-	# --------------------------------------------------------
-	"Sweden", "circa hard", "<5", "high",             "low",
-	"Sweden", "circa hard", "5-7", "high",            "high",
-	"Sweden", "circa hard", "7.5-11", "high",         "high",
-	"Sweden", "circa hard", "11-18", "high",          "high",
-	"Sweden", "circa hard", "18-30", "high",          "high",
-	"Sweden", "circa hard", ">30", "high",            "high",
-	
-	"Sweden", "circa mix", "<5", "moderate",          "low",
-	"Sweden", "circa mix", "5-7", "moderate",         "low",
-	"Sweden", "circa mix", "7.5-11", "moderate",      "moderate",
-	"Sweden", "circa mix", "11-18", "moderate",       "moderate",
-	"Sweden", "circa mix", "18-30", "moderate",       "high",
-	"Sweden", "circa mix", ">30", "moderate",         "moderate",
-	
-	"Sweden", "circa mud", "<5", "moderate",          "low",
-	"Sweden", "circa mud", "5-7", "moderate",         "moderate",
-	"Sweden", "circa mud", "7.5-11", "moderate",      "moderate",
-	"Sweden", "circa mud", "11-18", "moderate",       "moderate",
-	"Sweden", "circa mud", "18-30", "moderate",       "high",
-	"Sweden", "circa mud", ">30", "moderate",         "high",
-	
-	"Sweden", "circa sand", "<5", "moderate",         "low",
-	"Sweden", "circa sand", "5-7", "moderate",        "moderate",
-	"Sweden", "circa sand", "7.5-11", "moderate",     "moderate",
-	"Sweden", "circa sand", "11-18", "moderate",      "moderate",
-	"Sweden", "circa sand", "18-30", "moderate",      "high",
-	"Sweden", "circa sand", ">30", "moderate",        "high",
-	
-	"Sweden", "infra hard", "<5", "high",             "low",
-	"Sweden", "infra hard", "5-7", "high",            "moderate",
-	"Sweden", "infra hard", "7.5-11", "high",         "high",
-	"Sweden", "infra hard", "11-18", "high",          "high",
-	"Sweden", "infra hard", "18-30", "high",          "high",
-	"Sweden", "infra hard", ">30", "high",            "high",
-	
-	"Sweden", "infra mix", "<5", "moderate",          "low",
-	"Sweden", "infra mix", "5-7", "moderate",         "moderate",
-	"Sweden", "infra mix", "7.5-11", "moderate",      "moderate",
-	"Sweden", "infra mix", "11-18", "moderate",       "high",
-	"Sweden", "infra mix", "18-30", "moderate",       "high",
-	"Sweden", "infra mix", ">30", "moderate",         "high",
-	
-	"Sweden", "infra mud", "<5", "moderate",          "low",
-	"Sweden", "infra mud", "5-7", "moderate",         "moderate",
-	"Sweden", "infra mud", "7.5-11", "moderate",      "moderate",
-	"Sweden", "infra mud", "11-18", "moderate",       "high",
-	"Sweden", "infra mud", "18-30", "moderate",       "high",
-	"Sweden", "infra mud", ">30", "moderate",         "high",
-	
-	"Sweden", "infra sand", "<5", "moderate",         "low",
-	"Sweden", "infra sand", "5-7", "moderate",        "moderate",
-	"Sweden", "infra sand", "7.5-11", "moderate",     "moderate",
-	"Sweden", "infra sand", "11-18", "moderate",      "moderate",
-	"Sweden", "infra sand", "18-30", "moderate",      "moderate", # s_surf assumed
-	"Sweden", "infra sand", ">30", "moderate",        "high"
-)                                                           
-
-
-for(i in 1:nrow(cumi_Sensitivities)) {
-	terr       <- cumi_Sensitivities[[i, 1]]
-	bio        <- cumi_Sensitivities[[i, 2]]
-	sal        <- cumi_Sensitivities[[i, 3]]
-	sensi      <- cumi_Sensitivities[[i, 4]]
-	sensi_surf <- cumi_Sensitivities[[i, 4]]
-	tmp$sens[tmp$Territory == terr & tmp$Biotope == bio & tmp$Sal2 == sal] <- sensi
-	tmp$s_surf[tmp$Territory == terr & tmp$Biotope == bio & tmp$Sal2 == sal] <- sensi_surf
+	# (this following is done with ArcGIS ... otherwise it takes too long:)
+	areaCountryBiotopeSalinityLayer <- my_union(areaCountryBiotopeLayer,salinityLayer)
+	# Now some cleaning:
+	# 1. make sure it is valid
+	# 2. delete all polygons without biotope assignment (these are the ones from the salinity layer that lie beyond the biotope map)
+	# 3. only retain the attributes we want:
+	areaCountryBiotopeSalinityLayer <- areaCountryBiotopeSalinityLayer %>%
+		st_make_valid() %>%
+		filter(! is.na(Biotope)) %>%
+		select(-starts_with("FID")) %>%
+		st_cast("MULTIPOLYGON")
 }
-
-
-areaCountryBiotopeSalinityLayer <- tmp
 ```
 
+There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively be assigned a "moderate" sensitivity.
 
-Next, we want to set the sensitivity to 'high' for all areas that are reported to have certain sensitivie species. Thus, the layer is now combined with the extent of some benthic taxa leading to a high sensitivity (data layer from HELCOM MADS: Biodiversity > Ecosystem components (BSII) > Benthic species). The taxa are the genera *Mytilus, Zostera, Furcellaria, Fucus, Chara*.
+### Sensitivity assingment
+In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same countr/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
+
 
 ```{r}
-# ...
+if (! use_pre_calculated_data) {
+	cumi_message("assign sensitivities ...")
+	tmp <- areaCountryBiotopeSalinityLayer
+	
+	# new columns 'sens' and 's_surf':
+	tmp <- tmp %>% mutate(sens = 'none') %>% mutate(s_surf = 'none')
+	
+	# template for selection of value based on largest area (data from 'CumI-assessment-2021-08-23T2157.gpkg'):
+	# select sum(area) as area, '"' || Territory || '", "' || Biotope || '", "' || Sal2 || '", "' || s_surf || '",'
+	# as line from cumi
+	# group by Biotope,s_surf,Sal2
+	# order by Territory,biotope,Sal2
+	#
+	
+	cumi_Sensitivities <- tribble(
+		~Territory, ~Biotope,    ~Sal2,   ~sens,         ~s_surf,
+		# --------------------------------------------------------
+		"Denmark", "circa hard", "7.5-11", "high",        "high",
+		"Denmark", "circa hard", "11-18",  "high",        "high",
+		"Denmark", "circa hard", "18-30",  "high",        "high",
+		"Denmark", "circa hard", "> 30",   "high",        "high", # both values assumed
+		
+		"Denmark", "circa mix", "7.5-11",  "high",        "low",
+		"Denmark", "circa mix", "11-18",   "high",        "low",
+		"Denmark", "circa mix", "18-30",   "high",        "low",
+		"Denmark", "circa mix", "> 30",    "high",        "low",
+		
+		"Denmark", "circa mud", "7.5-11",  "moderate",    "moderate",
+		"Denmark", "circa mud", "11-18",   "moderate",    "moderate",
+		"Denmark", "circa mud", "18-30",   "moderate",    "high",
+		"Denmark", "circa mud", "> 30",    "moderate",    "high",
+		
+		"Denmark", "circa sand", "7.5-11", "low",         "moderate",
+		"Denmark", "circa sand", "11-18",  "low",         "moderate",
+		"Denmark", "circa sand", "18-30",  "low",         "high",
+		"Denmark", "circa sand", "> 30",   "low",          "high",
+		
+		"Denmark", "infra hard", "7.5-11", "high",        "high",
+		"Denmark", "infra hard", "11-18",  "high",        "high",
+		"Denmark", "infra hard", "18-30",  "high",        "high",
+		"Denmark", "infra hard", "> 30",   "high",         "high",
+		
+		"Denmark", "infra mix", "7.5-11", "high",         "low",
+		"Denmark", "infra mix", "11-18",  "high",         "low",
+		"Denmark", "infra mix", "18-30",  "high",         "high",
+		"Denmark", "infra mix", "> 30",   "high",         "high",
+		
+		"Denmark", "infra mud", "7.5-11", "moderate",     "moderate",
+		"Denmark", "infra mud", "11-18",  "moderate",     "moderate",
+		"Denmark", "infra mud", "18-30",  "moderate",     "high",
+		"Denmark", "infra mud", "> 30",   "moderate",     "high",
+		
+		"Denmark", "infra sand", "7.5-11", "low",         "moderate",
+		"Denmark", "infra sand", "11-18",  "low",         "moderate", # s_surf assumed
+		"Denmark", "infra sand", "18-30",  "low",         "high",
+		"Denmark", "infra sand", "> 30",   "low",         "high",
+		# --------------------------------------------------------
+		"Estonia", "circa hard", "5-7.5",  "high",        "high",
+		"Estonia", "circa hard", "7.5-11", "high",        "high",
+		
+		"Estonia", "circa mix", "5-7.5",  "moderate",     "high",
+		"Estonia", "circa mix", "7.5-11", "moderate",     "low",
+		
+		"Estonia", "circa mud", "5-7.5",  "moderate",     "moderate",
+		"Estonia", "circa mud", "7.5-11", "moderate",     "moderate",
+		
+		"Estonia", "circa sand", "5-7.5",  "moderate",    "moderate",
+		"Estonia", "circa sand", "7.5-11", "moderate",    "moderate",
+		
+		"Estonia", "infra hard", "5-7.5",  "high",        "high",
+		"Estonia", "infra hard", "7.5-11", "high",        "high",
+		
+		"Estonia", "infra mix", "5-7.5",  "moderate",     "moderate", # s_surf assumed
+		"Estonia", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
+		
+		"Estonia", "infra mud", "5-7.5",  "moderate",     "moderate",
+		"Estonia", "infra mud", "7.5-11", "moderate",     "moderate",
+		
+		"Estonia", "infra sand", "5-7.5",  "moderate",    "moderate",
+		"Estonia", "infra sand", "7.5-11", "moderate",    "moderate",
+		# --------------------------------------------------------
+		"Finland", "circa hard", "< 5",    "high",        "high",
+		"Finland", "circa hard", "5-7.5",  "high",        "high",
+		"Finland", "circa hard", "7.5-11", "high",        "high", # s_surf assumed
+		
+		"Finland", "circa mix", "< 5",    "moderate",     "moderate",
+		"Finland", "circa mix", "5-7.5",  "moderate",     "moderate",
+		"Finland", "circa mix", "7.5-11", "moderate",     "moderate",
+		
+		"Finland", "circa mud", "< 5",    "moderate",     "moderate",
+		"Finland", "circa mud", "5-7.5",  "moderate",     "moderate",
+		"Finland", "circa mud", "7.5-11", "moderate",     "moderate",
+		
+		"Finland", "circa sand", "< 5",    "moderate",    "moderate",
+		"Finland", "circa sand", "5-7.5",  "moderate",    "moderate",
+		"Finland", "circa sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
+		
+		"Finland", "infra hard", "< 5",    "high",        "high",
+		"Finland", "infra hard", "5-7.5",  "high",        "high",
+		"Finland", "infra hard", "7.5-11", "high",        "high", # s_surf assumed
+	
+		"Finland", "infra mix", "< 5",    "moderate",     "moderate",
+		"Finland", "infra mix", "5-7.5",  "moderate",     "moderate",
+		"Finland", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
+		
+		"Finland", "infra mud", "< 5",    "moderate",     "moderate",
+		"Finland", "infra mud", "5-7.5",  "moderate",     "moderate",
+		"Finland", "infra mud", "7.5-11", "moderate",     "moderate",
+		
+		"Finland", "infra sand", "< 5",    "moderate",    "moderate",
+		"Finland", "infra sand", "5-7.5",  "moderate",    "moderate",
+		"Finland", "infra sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
+		# --------------------------------------------------------
+		"Germany", "circa hard", "5-7.5",  "high",        "high",
+		"Germany", "circa hard", "7.5-11", "high",        "high",
+		"Germany", "circa hard", "11-18",  "high",        "high",
+		"Germany", "circa hard", "18-30",  "high",        "high",
+		
+		"Germany", "circa mix", "5-7.5",  "moderate",     "low", # s_surf assumed
+		"Germany", "circa mix", "7.5-11", "moderate",     "low",
+		"Germany", "circa mix", "11-18",  "moderate",     "high",
+		"Germany", "circa mix", "18-30",  "moderate",     "high",
+		
+		"Germany", "circa mud", "5-7.5",  "moderate",     "moderate", # s_surf assumed
+		"Germany", "circa mud", "7.5-11", "moderate",     "moderate",
+		"Germany", "circa mud", "11-18",  "moderate",     "high",
+		"Germany", "circa mud", "18-30",  "moderate",     "high",
+		
+		"Germany", "circa sand", "5-7.5",  "moderate",    "moderate",
+		"Germany", "circa sand", "7.5-11", "moderate",    "moderate",
+		"Germany", "circa sand", "11-18",  "moderate",    "moderate",
+		"Germany", "circa sand", "18-30",  "moderate",    "moderate",
+		
+		"Germany", "infra hard", "5-7.5",  "high",        "high",
+		"Germany", "infra hard", "7.5-11", "high",        "high",
+		"Germany", "infra hard", "11-18",  "high",        "high",
+		"Germany", "infra hard", "18-30",  "high",        "high",
+		
+		"Germany", "infra mix", "5-7.5",  "moderate",     "moderate",
+		"Germany", "infra mix", "7.5-11", "moderate",     "low",
+		"Germany", "infra mix", "11-18",  "moderate",     "low",
+		"Germany", "infra mix", "18-30",  "moderate",     "high",
+		
+		"Germany", "infra mud", "5-7.5",  "moderate",     "moderate",
+		"Germany", "infra mud", "7.5-11", "moderate",     "moderate",
+		"Germany", "infra mud", "11-18",  "moderate",     "moderate",
+		"Germany", "infra mud", "18-30",  "moderate",     "high",
+		
+		"Germany", "infra sand", "5-7.5",  "moderate",    "moderate",
+		"Germany", "infra sand", "7.5-11", "moderate",    "moderate",
+		"Germany", "infra sand", "11-18",  "moderate",    "high",
+		"Germany", "infra sand", "18-30",  "moderate",    "high",
+		# --------------------------------------------------------
+		"Latvia", "circa hard", "< 5",    "high",         "high", # both values assumed
+		"Latvia", "circa hard", "5-7.5",  "high",         "high",
+		"Latvia", "circa hard", "7.5-11", "high",         "high",
+		"Latvia", "circa hard", "11-18",  "high",         "high", # s_surf assumed
+		
+		"Latvia", "circa mix", "5-7.5",  "moderate",      "low",
+		"Latvia", "circa mix", "7.5-11", "moderate",      "low",
+		"Latvia", "circa mix", "11-18",  "moderate",      "low",
+		
+		"Latvia", "circa mud", "< 5",    "moderate",      "moderate",
+		"Latvia", "circa mud", "5-7.5",  "moderate",      "moderate",
+		"Latvia", "circa mud", "7.5-11", "moderate",      "moderate",
+		"Latvia", "circa mud", "11-18",  "moderate",      "moderate",
+		
+		"Latvia", "circa sand", "< 5",    "moderate",     "moderate",
+		"Latvia", "circa sand", "5-7.5",  "moderate",     "moderate",
+		"Latvia", "circa sand", "7.5-11", "moderate",     "moderate",
+		"Latvia", "circa sand", "11-18",  "moderate",     "moderate", # s_surf assumed
+		
+		"Latvia", "infra hard", "< 5",    "high",         "high",
+		"Latvia", "infra hard", "5-7.5",  "high",         "high",
+		"Latvia", "infra hard", "7.5-11", "high",         "high", # s_surf assumed
+		"Latvia", "infra hard", "11-18",  "high",         "high", # s_surf assumed
+		
+		"Latvia", "infra mix", "< 5",    "moderate",      "moderate", # s_surf assumed
+		"Latvia", "infra mix", "5-7.5",  "moderate",      "moderate",
+		"Latvia", "infra mix", "7.5-11", "moderate",      "moderate", # s_surf assumed
+		"Latvia", "infra mix", "11-18",  "moderate",      "moderate", # s_surf assumed
+		
+		"Latvia", "infra mud", "< 5",    "moderate",      "moderate",
+		"Latvia", "infra mud", "5-7.5",  "moderate",      "mmoderate",
+		"Latvia", "infra mud", "7.5-11", "moderate",      "moderate",
+		"Latvia", "infra mud", "11-18",  "moderate",      "moderate", # s_surf assumed
+		
+		"Latvia", "infra sand", "< 5",    "moderate",     "moderate",
+		"Latvia", "infra sand", "5-7.5",  "moderate",     "moderate",
+		"Latvia", "infra sand", "7.5-11", "moderate",     "moderate", # s_surf assumed
+		"Latvia", "infra sand", "11-18",  "moderate",     "moderate", # s_surf assumed
+		# --------------------------------------------------------
+		"Lithuania", "circa hard", "5-7.5",  "high",      "high",
+		"Lithuania", "circa hard", "7.5-11", "high",      "high",
+		
+		"Lithuania", "circa mix", "5-7.5",  "moderate",   "low",
+		"Lithuania", "circa mix", "7.5-11", "moderate",   "low",
+		"Lithuania", "circa mix", "11-18",  "moderate",   "low", # s_surf assumed
+		
+		"Lithuania", "circa mud", "5-7.5",  "moderate",   "moderate",
+		"Lithuania", "circa mud", "7.5-11", "moderate",   "moderate",
+		
+		"Lithuania", "circa sand", "< 5",    "moderate",  "moderate", # s_surf assumed
+		"Lithuania", "circa sand", "5-7.5",  "moderate",  "moderate",
+		"Lithuania", "circa sand", "7.5-11", "moderate",  "moderate",
+		
+		"Lithuania", "infra hard", "< 5",    "high",      "high", # both assumed (sens and s_surf)
+		"Lithuania", "infra hard", "5-7.5",  "high",      "high", # both assumed
+		"Lithuania", "infra hard", "7.5-11", "high",      "high", # both assumed
+		
+		"Lithuania", "infra mix", "5-7.5",  "moderate",   "moderate",
+		"Lithuania", "infra mix", "7.5-11", "moderate",   "moderate", # s_surf assumed
+		
+		"Lithuania", "infra mud", "5-7.5", "mmoderate",   "moderate",
+		"Lithuania", "infra mud", "7.5-11", "moderate",   "moderate", # s_surf assumed
+		
+		"Lithuania", "infra sand", "5-7.5",  "moderate",  "moderate",
+		"Lithuania", "infra sand", "7.5-11", "moderate",  "moderate", # s_surf assumed
+		# --------------------------------------------------------
+		"Poland", "circa hard", "5-7.5",  "high",         "high",
+		"Poland", "circa hard", "7.5-11", "high",         "high",
+		"Poland", "circa hard", "11-18",  "high",         "high", # s_surf assumed
+		
+		"Poland", "circa mix", "5-7.5",  "moderate",      "moderate", # s_surf assumed
+		"Poland", "circa mix", "7.5-11", "moderate",      "moderate",
+		"Poland", "circa mix", "11-18",  "moderate",      "moderate", # s_surf assumed
+		
+		"Poland", "circa mud", "< 5",    "moderate",      "moderate", # both values assumed
+		"Poland", "circa mud", "5-7.5",  "moderate",      "moderate",
+		"Poland", "circa mud", "7.5-11", "moderate",      "moderate",
+		"Poland", "circa mud", "11-18",  "moderate",      "moderate",
+		
+		"Poland", "circa sand", "< 5",    "moderate",     "moderate", # both values assumed
+		"Poland", "circa sand", "5-7.5",  "moderate",     "moderate",
+		"Poland", "circa sand", "7.5-11", "moderate",     "moderate",
+		"Poland", "circa sand", "11-18",  "moderate",     "moderate",
+		
+		"Poland", "infra hard", "5-7.5",  "high",         "high",
+		"Poland", "infra hard", "7.5-11", "high",         "high",
+		"Poland", "infra hard", "11-18",  "high",         "high",
 
-# as a last step write the layer to a file:
-st_write(areaCountryBiotopeLayer,"Biotopes/biotopes-pre_calculated.gpkg")
+		"Poland", "infra mix", "< 5",    "moderate",      "moderate", # sens assumed
+		"Poland", "infra mix", "5-7.5",  "moderate",      "moderate",
+		"Poland", "infra mix", "7.5-11", "moderate",      "moderate",
+		
+		"Poland", "infra mud", "< 5",    "moderate",      "moderate", # sens assumed
+		"Poland", "infra mud", "5-7.5",  "moderate",      "moderate",
+		"Poland", "infra mud", "7.5-11", "moderate",      "moderate",
+		"Poland", "infra mud", "11-18",  "moderate",      "moderate",
+		
+		"Poland", "infra sand", "< 5",    "moderate",     "moderate", # sens assumed
+		"Poland", "infra sand", "5-7.5",  "moderate",     "moderate",
+		"Poland", "infra sand", "7.5-11", "moderate",     "moderate",
+		"Poland", "infra sand", "11-18",  "moderate",     "moderate", # s_surf assumed
+		# --------------------------------------------------------
+		"Russia", "circa hard", "< 5",    "moderate",     "moderate", # both values assumed
+		"Russia", "circa hard", "5-7.5",  "moderate",     "moderate", # both values assumed
+		"Russia", "circa hard", "7.5-11", "moderate",     "moderate", # both values assumed
+		"Russia", "circa hard", "11-18",  "moderate",     "moderate", # both values assumed
+		
+		"Russia", "circa mix", "< 5",    "moderate",      "moderate", # both values assumed
+		"Russia", "circa mix", "5-7.5",  "moderate",      "moderate",
+		"Russia", "circa mix", "7.5-11", "moderate",      "moderate", # both values assumed
+		"Russia", "circa mix", "11-18",  "moderate",      "moderate", # both values assumed
+		
+		"Russia", "circa mud", "< 5",    "moderate",      "moderate", # both values assumed
+		"Russia", "circa mud", "5-7.5",  "moderate",      "moderate", # both values assumed
+		"Russia", "circa mud", "7.5-11", "moderate",      "moderate", # both values assumed
+		"Russia", "circa mud", "11-18",  "moderate",      "moderate", # both values assumed
+		
+		"Russia", "circa sand", "< 5",    "moderate",     "moderate", # both values assumed
+		"Russia", "circa sand", "5-7.5",  "moderate",     "moderate", # both values assumed
+		"Russia", "circa sand", "7.5-11", "moderate",     "moderate", # both values assumed
+		"Russia", "circa sand", "11-18",  "moderate",     "moderate", # both values assumed
+		
+		"Russia", "infra hard", "< 5",    "moderate",     "moderate", # both values assumed
+		"Russia", "infra hard", "5-7.5",  "moderate",     "moderate", # both values assumed
+		"Russia", "infra hard", "7.5-11", "moderate",     "moderate", # both values assumed
+		"Russia", "infra hard", "11-18",  "moderate",     "moderate", # both values assumed
+		
+		"Russia", "infra mix", "< 5",    "moderate",      "moderate", # both values assumed
+		"Russia", "infra mix", "5-7.5",  "moderate",      "moderate", # both values assumed
+		"Russia", "infra mix", "7.5-11", "moderate",      "moderate", # both values assumed
+		"Russia", "infra mix", "11-18",  "moderate",      "moderate", # both values assumed
+		
+		"Russia", "infra mud", "< 5",    "moderate",      "moderate", # both values assumed
+		"Russia", "infra mud", "5-7.5",  "moderate",      "moderate", # both values assumed
+		"Russia", "infra mud", "7.5-11", "moderate",      "moderate", # both values assumed
+		"Russia", "infra mud", "11-18",  "moderate",      "moderate", # both values assumed
+		
+		"Russia", "infra sand", "< 5",    "moderate",     "moderate", # both values assumed
+		"Russia", "infra sand", "5-7.5",  "moderate",     "moderate", # both values assumed
+		"Russia", "infra sand", "7.5-11", "moderate",     "moderate", # both values assumed
+		"Russia", "infra sand", "11-18",  "moderate",     "moderate", # both values assumed
+		# --------------------------------------------------------
+		"Sweden", "circa hard", "< 5",    "high",         "low",
+		"Sweden", "circa hard", "5-7.5",  "high",         "high",
+		"Sweden", "circa hard", "7.5-11", "high",         "high",
+		"Sweden", "circa hard", "11-18",  "high",         "high",
+		"Sweden", "circa hard", "18-30",  "high",         "high",
+		"Sweden", "circa hard", "> 30",   "high",         "high",
+		
+		"Sweden", "circa mix", "< 5",    "moderate",      "low",
+		"Sweden", "circa mix", "5-7.5",  "moderate",      "low",
+		"Sweden", "circa mix", "7.5-11", "moderate",      "moderate",
+		"Sweden", "circa mix", "11-18",  "moderate",      "moderate",
+		"Sweden", "circa mix", "18-30",  "moderate",      "high",
+		"Sweden", "circa mix", "> 30",   "moderate",      "moderate",
+		
+		"Sweden", "circa mud", "< 5",    "moderate",      "low",
+		"Sweden", "circa mud", "5-7.5",  "moderate",      "moderate",
+		"Sweden", "circa mud", "7.5-11", "moderate",      "moderate",
+		"Sweden", "circa mud", "11-18",  "moderate",      "moderate",
+		"Sweden", "circa mud", "18-30",  "moderate",      "high",
+		"Sweden", "circa mud", "> 30",   "moderate",      "high",
+		
+		"Sweden", "circa sand", "< 5",    "moderate",     "low",
+		"Sweden", "circa sand", "5-7.5",  "moderate",     "moderate",
+		"Sweden", "circa sand", "7.5-11", "moderate",     "moderate",
+		"Sweden", "circa sand", "11-18",  "moderate",     "moderate",
+		"Sweden", "circa sand", "18-30",  "moderate",     "high",
+		"Sweden", "circa sand", "> 30",   "moderate",     "high",
+		
+		"Sweden", "infra hard", "< 5",    "high",         "low",
+		"Sweden", "infra hard", "5-7.5",  "high",         "moderate",
+		"Sweden", "infra hard", "7.5-11", "high",         "high",
+		"Sweden", "infra hard", "11-18",  "high",         "high",
+		"Sweden", "infra hard", "18-30",  "high",         "high",
+		"Sweden", "infra hard", "> 30",   "high",         "high",
+		
+		"Sweden", "infra mix", "< 5",    "moderate",      "low",
+		"Sweden", "infra mix", "5-7.5",  "moderate",      "moderate",
+		"Sweden", "infra mix", "7.5-11", "moderate",      "moderate",
+		"Sweden", "infra mix", "11-18",  "moderate",      "high",
+		"Sweden", "infra mix", "18-30",  "moderate",      "high",
+		"Sweden", "infra mix", "> 30",   "moderate",      "high",
+		
+		"Sweden", "infra mud", "< 5",    "moderate",      "low",
+		"Sweden", "infra mud", "5-7.5",  "moderate",      "moderate",
+		"Sweden", "infra mud", "7.5-11", "moderate",      "moderate",
+		"Sweden", "infra mud", "11-18",  "moderate",      "high",
+		"Sweden", "infra mud", "18-30",  "moderate",      "high",
+		"Sweden", "infra mud", "> 30",   "moderate",      "high",
+		
+		"Sweden", "infra sand", "< 5",    "moderate",     "low",
+		"Sweden", "infra sand", "5-7.5",  "moderate",     "moderate",
+		"Sweden", "infra sand", "7.5-11", "moderate",     "moderate",
+		"Sweden", "infra sand", "11-18",  "moderate",     "moderate",
+		"Sweden", "infra sand", "18-30",  "moderate",     "moderate", # s_surf assumed
+		"Sweden", "infra sand", "> 30",   "moderate",     "high"
+	)                                                           
+	
+	# counter for missing sensitivity assignments:
+	missCount <- 0
+	missData <- c()
+	
+	for(i in 1:nrow(tmp)) {
+		terr       <- tmp[[i, "Territory"]]
+		bio        <- tmp[[i, "Biotope"]]
+		sal        <- tmp[[i, "Sal2"]]
+		sensi      <- tmp[[i, "sens_spec"]]
+		#
+		# - translate short names to MSFD long names
+		# - use "infra/circa hard" biotopes for MSFD coarse sediments and rock/reef
+		# - use "circa" biotopes for MSFD offshore
+		#
+		shortName <- case_when(
+			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
+			bio == "Circalittoral coarse sediment" ~ "circa hard",
+			bio == "Circalittoral mixed sediment" ~ "circa mix",
+			bio == "Circalittoral mud" ~ "circa mud",
+			bio == "Circalittoral sand" ~ "circa sand",
+			bio == "Circalittoral mud or Circalittoral sand" ~ "???",
+			
+			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
+			bio == "Infralittoral coarse sediment" ~ "infra hard",
+			bio == "Infralittoral mixed sediment" ~ "infra mix",
+			bio == "Infralittoral mud" ~ "infra mud",
+			bio == "Infralittoral sand" ~ "infra sand",
+			bio == "Infralittoral mud or Infralittoral sand" ~ "???",
+			
+			bio == "Offshore circalittoral coarse sediment" ~ "circa hard",
+			bio == "Offshore circalittoral mixed sediment" ~ "circa mix",
+			bio == "Offshore circalittoral mud" ~ "circa mud",
+			bio == "Offshore circalittoral mud or Offshore circalittoral sand" ~ "???",
+			bio == "Offshore circalittoral rock and biogenic reef" ~ "circa hard",
+			bio == "Offshore circalittoral sand" ~ "circa sand",
+			
+			TRUE ~ "other"
+		)
+		
+		if (sensi %in% c("Chara","Fucus","Furcellaria","Mytilus","Zostera")) {
+			# use high sensitivity:
+			tmp$sens[i] <- "high"
+			tmp$s_surf[i] <- "high"
+		} else {
+			if (bio == "Na" | is.na(sal)) {
+				# when sensitivity cannot be determine due to lack of data, use "moderate":
+				tmp$sens[i] <- "moderate"
+				tmp$s_surf[i] <- "moderate"
+			} else if (shortName == "???") {
+				# if the biotope is either of two possibilities,
+				# precautionarily take the one leading to higher sensitivity:
+				zone <- substr(str_to_lower(word(bio,1)),1,5)
+				if (zone == "offsh") {zone <- "circa"}
+				s1a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$sens
+				if (rlang::is_empty(s1a)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					s1a <- ""
+					missCount <- missCount + 1
+				}
+				s1b <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"sand",sep=" ") & Sal2 == sal)$sens
+				if (rlang::is_empty(s1b)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					s1b <- ""
+					missCount <- missCount + 1
+				}
+				s1 <- c(s1a,s1b)
+				s1factor <- factor(s1, levels = cumi_categories, ordered = TRUE)
+				s1max <- as.character(max(s1factor))
+				tmp$sens[i] <- s1max
+				#
+				s2a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$s_surf
+				if (rlang::is_empty(s2a)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					s2a <- ""
+					missCount <- missCount + 1
+				}
+				s2b <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"sand",sep=" ") & Sal2 == sal)$s_surf
+				if (rlang::is_empty(s2b)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					s2b <- ""
+					missCount <- missCount + 1
+				}
+				s2 <- c(s2a,s2b)
+				s2factor <- factor(s2, levels = cumi_categories, ordered = TRUE)
+				s2max <- as.character(max(s2factor))
+				tmp$s_surf[i] <- s2max
+			} else {
+				# standard case:
+				sA <- subset(cumi_Sensitivities, Territory==terr & Biotope == shortName & Sal2 == sal)$sens
+				if (rlang::is_empty(sA)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					sA <- ""
+					missCount <- missCount + 1
+				}
+				tmp$sens[i] <- sA
+				#
+				sB <- subset(cumi_Sensitivities, Territory==terr & Biotope == shortName & Sal2 == sal)$s_surf
+				if (rlang::is_empty(sB)) {
+					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
+					sB <- ""
+					missCount <- missCount + 1
+				}
+				tmp$s_surf[i] <- sB
+			}
+		}
+	}
+	
+	if (missCount > 0) {
+		cat("Missing sensitivity information for:",missData,sep="\n")
+		cumi_message(paste("STOPPING here due to",missCount,"missing sensitivities!",sep=" "))
+		stop("CumI script ends here.")
+	}
+	
+	# this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
+	# in order to prevent errors in later spatial operations
+	biotopeLayer <- tmp %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
+	# as a last step write the layer to a file:
+	st_write(biotopeLayer,file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg"))
+}
 ```
 
 
@@ -1015,18 +1214,17 @@ The (pre-calculated) biotope layer now has these attribute columns:
 - sens = general pressure-independant sensitivity
 - s_surf = sensitivity against surface abrasion due to bottom trawling
 - sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
-- level_2 = HELCOM subbasins 2018 (assessment units)
+- level_2 = HELCOM subbasins
+- HELCOM_ID = the ID of the HELCOM subbasin
 - Territory = country name
-- Sal = bottom salinity class (from HELCOM BALANCE project)
-- Sal2 = bottom salinity value range (from HELCOM BALANCE project)
+- Sal = bottom salinity class
+- Sal2 = bottom salinity value range
 
 ```{r}
-cumi_message("loading biotope layer ...")
-biotope_file <- "Data/Biotopes/biotopes-pre_calculated.gpkg"
-# this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
-# in order to prevent errors in later spatial operations
-if (! use_pre_calculated_data) {
-	biotopeLayer <- st_read(biotope_file) %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
+if (use_pre_calculated_data) {
+	cumi_message("loading biotope layer ...")
+	biotope_file <- file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg")
+	biotopeLayer <- st_read(biotope_file)
 }
 ```
 
@@ -1059,12 +1257,11 @@ if (! use_pre_calculated_data) {
 cumi_message("processing trawling fishery ...")
 ```
 
-The fishery data were provided by ICES and then put into HELCOM Maps and Data Service. This version of the script uses a preprocessed version of these raw data, where:
+The fishery data were provided by ICES. This version of the script uses a preprocessed version of these raw data, where:
 
-1. all years have been combined into one GIS layer
-2. the raw SAR data have been smoothed from c-squares into a 1x1 km grid using a mean SAR value per 1x1 km grid cell weighted by the area of the involved c-squares
-3. the MOP has been calculated (column 'MOP_1'; see script below)
-4. the data have been combined with the above pre-calculated biotope map (including the changes in the sensitivities for DK and SE)
+1. the raw SAR data have been smoothed from c-squares into a 1x1 km grid using a mean SAR value per 1x1 km grid cell weighted by the area of the involved c-squares
+2. the MOP has been calculated (column 'MOP_1'; see script below)
+3. the data have been combined with the above pre-calculated biotope map
 
 *The next version of the script will also contain the necessary steps in R to make the preprocessing.*
 
@@ -1073,7 +1270,7 @@ The SAR values are treated directly as intensity and frequency is ignored, thus 
 ```{r}
 if (use_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
-	fishing_file_pre <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf_pre_calculated.shp"
+	fishing_file_pre <- file.path(myDir,"Fishery/fishery_pre_calculated.shp")
 	if (! file.exists(fishing_file_pre)) {
 		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
 	} else {
@@ -1081,8 +1278,12 @@ if (use_pre_calculated_data) {
 	}
 } else {
 	cumi_message("... calculating fishery impact - this will take a lot of time, so see you tomorrow ...")
-	fishing_file <- "Data/Fishing/HELCOM_1x1km_Baltic_Sea_surf.shp"
+	fishing_file <- file.path(myDir,"Fishery/fishery_surface.shp")
 	fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
+	
+	# columns for SAR values:
+	fisheryQuarters <- c("1","2","3","4")
+	fisheryYears <- c("2016","2017","2018","2019","2020","2021")
 	
 	# treat SAR values lower than 0.05 as zero intensity:
 	for (myColumn in c('SURFSAR_11','SURFSAR_12','SURFSAR_13','SURFSAR_14','SURFSAR_15','SURFSAR_16')) {
@@ -1611,7 +1812,9 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 	- 7: Shipping, polygon data
 - cumi: the final cumulative impact category
 	
-	
+# Limitations in the assessment
+
+- no differentiation of fishing pressure accoring to geat type
 
 # Outlook
 This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
