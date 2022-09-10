@@ -171,14 +171,14 @@ my_union <- function(a,b) {
 }
 ```
 
-After an initial and not comprehensive test, it seems that the union function in the new terr package is even faster than using a QGIS process for smaller files:
+After an initial and not comprehensive test, it seems that the union function in the new terra package is even faster than using a QGIS process for smaller files:
 
 ```{r eval=FALSE}
 my_union <- function(a,b) {
 	if (! class(a)[1] == "spatVector") {a <- vect(a)}
 	if (! class(b)[1] == "spatVector") {b <- vect(b)}
 	result <- terra::union(a,b)
-	return(result)
+	return(st_to_sf(result))
 }
 ```
 
@@ -241,7 +241,41 @@ cumi_get_sensi <- function(resist,resil) {
 }
 ```
 
-The second rule combines biotope sensitivity and the physical magnitude of pressure (= MOP) to derive the assumed impact:
+
+The second rule combines intensity and frequency to derive the magnitude of impact (MOP) of a pressure:
+
+```{r}
+# the MOP matrix:
+cumi_MOP_matrix <- tribble(
+    ~intensity, ~frequency_persistent, ~frequency_frequent, ~frequency_regular, ~frequency_occasional,
+    "high",     "high",                "high",              "moderate",          "moderate",
+    "moderate", "high",                "moderate",          "moderate",          "low",
+    "low",      "moderate",            "moderate",          "low",               "very low",
+    "very low", "moderate",            "low",               "very low",          "very low"
+)
+
+
+# a function to retrieve the MOP:
+cumi_get_MOP <- function(inten,freq) {
+	#
+	# function returning the MOP given the pressure intensity
+	# and the frequency as strings
+	#
+	# inten - the intensity as string
+	# freq  - the frequency as string
+	#
+	freq <- paste("frequency_",freq,sep="")
+	result <- subset(cumi_MOP_matrix,intensity==inten)[[freq]]
+	if (is.null(result)) {
+		return('none')
+	} else {
+		return(result)
+	}
+}
+```
+
+
+The third rule combines biotope sensitivity and the physical magnitude of pressure (= MOP) to derive the assumed impact:
 
 ```{r}
 cumi_impact_matrix <- tribble(
@@ -275,7 +309,7 @@ cumi_get_impact <- function(MOP,sensi) {
 }
 ```
 
-The third rule combines two impacts when these are cumulated in the last step of the assessment:
+The fourth rule combines two impacts when these are cumulated in the last step of the assessment:
 
 ```{r}
 # the cumulation matrix:
@@ -333,26 +367,27 @@ The table also lists whether there is a buffer zone counting as 'loss' (~buffer\
 #	OWF = offshore wind farm
 #
 cumi_buffers <- tribble(
-	~pressure,		~description,						~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,	~buffer_verylow,  ~footprint_as_loss,
+	~pressure,		~description,                  ~buffer_loss,  ~buffer_high, ~buffer_moderate, ~buffer_low,	~buffer_verylow,  ~footprint_as_loss,
 	#--------------|------------------------------|--------------|-------------|-----------------|--------------|------------------|------------------
 	"extraction",	"sand and gravel extraction",  0,				 50,			  100,				  250,			  500,					 1,
 	"depositing",	"deposit of dredged material", 0,				 50,			  100,				  250,			  500,					 0,
-	"dredging M",	"maintenance dredging",		  0,				 50,			  100,				  250,			  500,					 0,
-	"dredging CAP", "capital, areas",				  0,				  0,				 0,					 0,				 0,					 1,
-	"dredging CAP1","captial, points, <= 5000m3", 25,				 25,				25,					25,				25,					 1,
-	"dredging CAP2","capital, points, > 5000m3",  50,				 50,				50,					50,				50,					 1,
-	"cable C",		"cable",							  0,				  0,			  550,				  600,			 1000,					 0,
-	"cable O",		"cable",							  1.5,				1.5,			  1.5,				  1.5,			  1.5,				  0,
-	"pipeline C",	"pipelines",						 0,				  0,			  550,				  600,			 1000,					 0,
-	"pipeline O",	"pipelines",						15,				 15,				15,					90,			  315,					 0,
-	"platform C",	"platforms",						 0,				  0,			  550,				  600,			 1000,					 0,
-	"platform O",	"platforms",						25,				 25,				25,					25,				25,					 0,
-	"OWF C",		  "offshore wind farms",			0,				  0,			  550,				  600,			 1000,					 0,
-	"OWF O",		  "offshore wind farms",		  30,				 30,				40,					50,			  130,					 0,
-	"coastalDef C", "coastal defence",				 0,				 50,			  100,				  250,			  500,					 0,
-	"coastalDef O", "coastal defense",				50,				 50,				50,					50,				50,					 0,
-	"mariculture",  "mariculture",					150,				150,			  400,				  650,			 1150,					 1,
-	"harbour O",	 "harbour",						 200,				  0,				 0,					 0,				 0,					 0
+	"dredging M",	"maintenance dredging",        0,				 50,			  100,				  250,			  500,					 0,
+	"dredging CAP", "capital, areas",              0,				  0,			    0,				    0,			    0,					 1,
+	"dredging CAP1","captial, points, <= 5000m3", 25,				 25,			   25,				   25,			   25,					 1,
+	"dredging CAP2","capital, points, > 5000m3",  50,				 50,			   50,				   50,			   50,					 1,
+	"cable C",		"cable",                       0,				  0,			  550,				  600,			 1000,					 0,
+	"cable O",		"cable",                       1.5,				1.5,			    1.5,			    1.5,		    1.5,				 0,
+	"pipeline C",	"pipelines",                   0,				  0,			  550,				  600,			 1000,					 1,
+	"pipeline O",	"pipelines",                  15,				 15,			   15,				   90,			  315,					 0,
+	"platform C",	"platforms",                   0,				  0,			  550,				  600,			 1000,					 0,
+	"platform O",	"platforms",                  25,				 25,			   25,				   25,			   25,					 0,
+	"OWF C",		"offshore wind farms",         0,				  0,			  550,				  600,			 1000,					 0,
+	"OWF O",		"offshore wind farms",        30,				 30,			   40,			       50,			  130,					 0,
+	"OWF O mono",	"offshore wind farms",        30,				 30,			   40,			       50,			  130,					 1,
+	"coastalDef C", "coastal defence",             0,				 50,			  100,				  250,			  500,					 0,
+	"coastalDef O", "coastal defense",            50,				 50,			   50,				   50,			   50,					 0,
+	"mariculture",  "mariculture",               150,				150,			  400,				  650,			 1150,					 1,
+	"harbour O",	"harbour",                   200,				  0,			    0,				    0,			    0,					 0
 )
 ```
 
@@ -451,7 +486,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 }
 ```
 
-In order to make the script a bit more concise, a function combining some standard steps into one go is used. It reads the opened pressure GIS layer, assuming it is having a valid geometry/topology and the correct coordinate system, applies the buffer model, clips the resulting layer at the boudary of the biotope layer, includes it into the final impact layer and calculates the impact (and deletes the now superfluous 'int' column):
+In order to make the script a bit more concise, a function combining some standard steps into one go is used. It reads the opened pressure GIS layer, assuming it is having a valid geometry/topology and the correct coordinate system, applies the buffer model, clips the resulting layer at the boundary of the biotope layer, includes it into the final impact layer and calculates the impact (and deletes the now superfluous 'int' column):
 
 
 ```{r}
@@ -525,6 +560,8 @@ Everything should be going on in the same coordinate system. So, we define this 
 cumi_message("setting up the assessment ...")
 coordSystem <- 3035
 
+assessmentYears <- c("2016","2017","2018","2019","2020","2021")
+
 # As the processing of the clipLayer and the bottom trawling pressure take veeery looong to be calculated (approx. 7 hours for bottom trawling on my machine
 # and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure,
 # a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling.
@@ -546,7 +583,7 @@ cumi_categories <- c("very low","low","moderate","high")
 
 
 ## The assessment area
-The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
+The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This data set is used to clip all other layers if they contains parts that are outside of this boundary.
 
 ```{r}
 if (! use_pre_calculated_data) {
@@ -574,7 +611,7 @@ if (! use_pre_calculated_data) {
 The biotope map is based on the *Emodnet broad-scale seabed habitat map for Europe* (= EUSeapMap).
 
 ### Biotope, country and assessment area data
-In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
+In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic data set is huge) a manually clipped version if the latter data set is used where anything roughly outside the Kattegat area has been removed.
 
 ```{r}
 if (! use_pre_calculated_data) {
@@ -727,7 +764,7 @@ if (! use_pre_calculated_data) {
 }
 ```
 
-There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively be assigned a "moderate" sensitivity.
+There is a limitation in the salinity data set. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively be assigned a "moderate" sensitivity.
 
 ### Sensitivity assingment
 In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same countr/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
@@ -917,7 +954,7 @@ if (! use_pre_calculated_data) {
 		"Latvia", "infra mix", "11-18",  "moderate",      "moderate", # s_surf assumed
 		
 		"Latvia", "infra mud", "< 5",    "moderate",      "moderate",
-		"Latvia", "infra mud", "5-7.5",  "moderate",      "mmoderate",
+		"Latvia", "infra mud", "5-7.5",  "moderate",      "moderate",
 		"Latvia", "infra mud", "7.5-11", "moderate",      "moderate",
 		"Latvia", "infra mud", "11-18",  "moderate",      "moderate", # s_surf assumed
 		
@@ -947,7 +984,7 @@ if (! use_pre_calculated_data) {
 		"Lithuania", "infra mix", "5-7.5",  "moderate",   "moderate",
 		"Lithuania", "infra mix", "7.5-11", "moderate",   "moderate", # s_surf assumed
 		
-		"Lithuania", "infra mud", "5-7.5", "mmoderate",   "moderate",
+		"Lithuania", "infra mud", "5-7.5", "moderate",   "moderate",
 		"Lithuania", "infra mud", "7.5-11", "moderate",   "moderate", # s_surf assumed
 		
 		"Lithuania", "infra sand", "5-7.5",  "moderate",  "moderate",
@@ -1251,6 +1288,50 @@ if (! use_pre_calculated_data) {
 }
 ```
 
+The pressure data used here were provided by HELCOM as a result of a data call to the contracting parties:
+
+Cables
+: HOLAS 3 data for DK, FI and PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE and SE (flaged in the Notes). Complementation with HOLAS 2 data for RU, LV, LT (flaged in the Notes). Data still pending from CPs.
+
+Coastal defence and flood protection (under construction)
+: HOLAS 3 data for DE, DK, FI, PL, SE. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE (flaged in the Notes). Complementation with HOLAS 2 data for PL (flaged in the Notes). Please, observe that all 'Status' classifications from data providers were included.
+
+Deposit of dredged material (points and areas)
+: Includes a data extract of the database for the years 2016-2020. In the zip package there is one additional shapefile for depositing areas where the data is cross tabulated to have amount as columns. If the more detailed info on e.g. Material or capital/maintenance is needed, this is found in the database extract. Corrections and complementations from the revision still pending.
+
+Dredging (maintenance, points and areas)
+: Includes a data extract of the database for the years 2016-2020 and the data submitted for the data call. Data from CPs and corrections from revision still pending. One zip file contains an extract of the original data for maintanance dredging and the other zip file contains the merged 500m buffer from the extract.
+
+Extraction of sand and gravel
+: HOLAS 3 data for FI, EE and DE. Data reported as not available for LT. Data still pending from CPs. One zip file contains an extract of the original data and the other zip file contains the merged 500m buffer from the extract. There is also an excel table with reported data by Poland.
+
+Finfish mariculture
+: PLC data.
+
+Fishing intensity 2011-2016 average
+: Data still pending, to be delivered soon.
+
+Furcellaria harvesting
+: Statistical data from EUROSTAT. Spatial data extracted from HOLAS 2 and possible updates confirmed with the country.
+
+Pipelines
+: HOLAS 3 data for DK, EE, FI, PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by SE (flaged in the Notes). Data complemented with HOLAS 2 data for RU (flaged in the Notes). Data still pending from CPs.
+
+Recreational boating and sports
+: Recreational boating and sports layer from HOLAS 2.
+
+Shellfish mariculture
+: Data from EMODnet.
+
+Shipping density
+: Raster for all ship types for the years 2006-2020. The raster should be rescaled with depth, if we are to follow the holas2 methodology. The raster for rescaling can be found in the same data package. There are 2 rasters: one for the average depth per 1x1 km grid cell, and another one that can be directly used to multiply the raster (s) one decides to use. The rescaling follows the following values 0-10 m= 1 (100%); 10-15 m= 0,5 (50%); 15-20 m= 0,25 (25%); 20-25 m= 0,1 (10%); 25m < = 0 (0%). In the second raster these values are 1; 0,5; 0,25; 0,1 and 0.
+
+Wind farms (under construction)
+: No Status falling 'under construction' received for now in HOLAS 3 data call. Data still pending from CPs.
+
+Wind farms (operational)
+: HOLAS 3 data for DK and FI. Data reported as not available for PL and LT. HOLAS 2 data use requested by SE (flaged in the Notes). Data reported as not relevant for LV and EE. Data still pending from CPs.
+
 ### 1. Bottom trawling fishery
 
 ```{r}
@@ -1267,6 +1348,12 @@ The fishery data were provided by ICES. This version of the script uses a prepro
 
 The SAR values are treated directly as intensity and frequency is ignored, thus the SAR values are directly translated to MOP categories.
 
+The confidence is rated as 'd3t3s1' for all countries except Russia which is rated 'd0t0s0' due to missing data:
+
+- data quality is rated 3 as values are based on reported measurements
+- temporal coverage is rated 3 (no year missing)
+- spatial coverage is rated 0 for Russia (assumed from how the data look like) and 1 otherwise
+
 ```{r}
 if (use_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
@@ -1274,7 +1361,7 @@ if (use_pre_calculated_data) {
 	if (! file.exists(fishing_file_pre)) {
 		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
 	} else {
-		impact_map <- st_read(fishing_file_pre) %>% st_make_valid()
+		impact_map <- st_read(fishing_file_pre)
 	}
 } else {
 	cumi_message("... calculating fishery impact - this will take a lot of time, so see you tomorrow ...")
@@ -1282,40 +1369,70 @@ if (use_pre_calculated_data) {
 	fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
 	
 	# columns for SAR values:
-	fisheryQuarters <- c("1","2","3","4")
-	fisheryYears <- c("2016","2017","2018","2019","2020","2021")
+	fishingQuarters <- c("1","2","3","4")
+	fishingSARcolumns <- c()
+	for(myYear in assessmentYears) {
+		for(myQuarter in fishingQuarters) {
+			fishingSARcolumns <- c(fishingSARcolumns,paste("F",myYear,"_",myQuarter,sep=""))
+		}
+	}
+	# expression to calculate the average SAR:
+	sum <- paste(fishingSARcolumns,collapse='+')
+	avgSAR <- paste("(", sum, ")/",length(fishingSARcolumns))
+	makeAvg <- function(myLayer,myString) {
+		q <- quote(mutate(myLayer,sar_avg = myString))
+		eval(parse(text=sub("myString", myString, deparse(q))))
+	}
 	
 	# treat SAR values lower than 0.05 as zero intensity:
-	for (myColumn in c('SURFSAR_11','SURFSAR_12','SURFSAR_13','SURFSAR_14','SURFSAR_15','SURFSAR_16')) {
+	for (myColumn in fishingSARcolumns) {
 		fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
 	}
 	
 	# convert SAR into MOP:
-	fishing_x <- fishing_x %>% mutate(sar_avg = (SURFSAR_11 + SURFSAR_12 + SURFSAR_13 + SURFSAR_14 + SURFSAR_15 + SURFSAR_16)/6) %>%
+	fishing_x <- makeAvg(fishing_x,avgSAR) %>%
 		mutate(MOP = case_when(
 		sar_avg == 0							~ 'none',
 		sar_avg  > 0	 & sar_avg < 0.33 ~ 'very low',
 		sar_avg >= 0.33 & sar_avg < 0.66 ~ 'low',
-		sar_avg >= 0.66 & sar_avg < 2	 ~ 'moderate',
+		sar_avg >= 0.66 & sar_avg < 2	   ~ 'moderate',
 		sar_avg >= 2							~ 'high',
-		TRUE									  ~ 'undefined'
+		TRUE									   ~ 'undefined'
 	))
 	# we can now delete the columns we do not need in future
 	# and we can remove all polygons with no MOP
 	# and dissolve the MOP layer:
 	fishing_x <- fishing_x %>%
-		dplyr::select(-c(ET_ID,H_sub_code,H_sub_name,location,SURFSAR_11,SURFSAR_12,SURFSAR_13,SURFSAR_14,SURFSAR_15,SURFSAR_16,sar_avg)) %>%
+		dplyr::select(-starts_with("F20")) %>%
+		dplyr::select(-c("Shape_Leng","Shape_Area","sar_avg")) %>%
 		dplyr::filter(! MOP=='none') %>%
 		group_by(MOP) %>% 
-		summarize(geometry = st_union(geometry))
+		summarize(geometry = st_union(geometry)) %>%
+		st_make_valid()
 	
 	# the my_union() in the following line is what takes 99.9% of the time in this pressure,
 	# you might want to use ArcGIS for this particular 'union' task below as it is even significantly faster than QGIS
-	# (24–45 seconds on my machine compared to approx. 7 hours with R !!!).
-	impact_map %>% st_cast("MULTIPOLYGON") %>% my_union(fishing_x)
+	# (4-7 minutes on my machine using ArcGIS compared to approx. 12-15 hours with QGIS via R !!!).
+	# When doing the union with QGIS, some sliver polygons will result. These have missing biotope assignment and need to be
+	# deleted with `filter(! is.na(Biotope))`
+	#
+	# (for the current ssessment, the QGIS function was used)
+	#
+	impact_map <- impact_map %>%
+		st_cast("MULTIPOLYGON") %>%
+		my_union(fishing_x) %>%
+		st_cast("MULTIPOLYGON") %>%
+		dplyr::mutate(impact_1 = unname(mapply(cumi_get_impact,MOP,s_surf))) %>%
+		dplyr::select(-MOP) %>%
+		st_make_valid()
+	
+	# confidence:
+	impact_map <- impact_map %>% mutate(confidence_1 = "none")
+	impact_map$confidence_1[impact_map$Territory != "Russia"] <- "d3t3s1"
+	impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 != "none"] <- "d3t3s1"
+	impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 == "none"] <- "d0t0s0"
+	st_write(impact_map,file.path(myDir,"Fishery/fishery_pre_calculated.gpkg"))
 }
-impact_map <- impact_map %>% st_cast("MULTIPOLYGON") %>% dplyr::mutate(impact_1 = unname(mapply(cumi_get_impact,MOP,s_surf))) %>% dplyr::select(-MOP)
-
 ```
 
 ### 2. Mariculture
@@ -1324,46 +1441,59 @@ impact_map <- impact_map %>% st_cast("MULTIPOLYGON") %>% dplyr::mutate(impact_1 
 cumi_message("processing of mariculture ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Finfish mariculture](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/3cfa469a-6a78-4913-b82f-57fd0e7f4dc0), last accessed 2021-08-17.
+The data set contains point data from the HELCOM Pollution Load Compilation (PLC) data collection covering the period from 2016 to 2020. The data also show in which years there has been some production. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
+The confidence is rated 'd2t3s1':
 
-These are point data. Some of the points are classified as "on land" and are ignored.
+- data quality is rated 2 as data are used without the available quantitative information
+- temporal coverage is rated 3 (one year missing)
+- spatial coverage is rated 1 (assumed, as data set does not include information on reporting countries)
 
 ```{r}
 cumi_message("... finfish ...")
-mari_1_file <- "Data/Finfish_mariculture/Finfish_mariculture.shp"
-mari_1 <- st_read(mari_1_file) %>% filter(! str_detect(AREA,'land'))
+mari_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/finfish mariculture/Finfish_PLC/Finfish_PLC.shp")
+mari_1 <- st_read(mari_1_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
 impact_map <- cumi_process_pressure(mari_1,"mariculture","2A")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_2A = "d2t3s1")
+
 ```
 
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture points](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/21efdecc-2fd7-4bfb-9832-68c995291bf7), last accessed 2021-08-17.
+The data set was provided by HELCOM and was originally taken from EMODnet. It contains point data and only includes sites from Denmark (taken from the official lists of registered aquaculture sites). Data for Germany are missing. There is no shellfish production in other MS than Denmark and Germany within the HELCOM assessment area.
 
-These are point data. All sites are taken into account.
+The production status is not included in the data set and is thus assumed to be "active"). Therefore, all sites are taken into account.
+
+The confidence is rated 'd2t0s1' for Denmark and 'd0t0s0' for Germany:
+
+- data quality is rated 2 for Denmark as data carries no quantitative information
+- temporal coverage is rated 0 (no information available for individual years)
+- spatial coverage is rated 1 for Denmark, 0 for Germany
 
 ```{r}
 cumi_message("... shellfish (points) ...")
-mari_2_file <- "Data/Shellfish_mariculture_points/Shellfish_mariculture_points.shp"
+mari_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shellfish mariculture/Aquaculture_Shellfish_EMODnets/Aquaculture_Shellfish_EMODnets.shp")
 mari_2 <- st_read(mari_2_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
 impact_map <- cumi_process_pressure(mari_2,"mariculture","2B")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_2B = "none")
+impact_map$confidence_2B[impact_map$Territory == "Denmark"] <- "d2t0s1"
+impact_map$confidence_2B[impact_map$Territory == "Germany"] <- "d0t0s0"
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Shellfish mariculture areas](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/8fbf946a-18d2-4b24-98ad-1327ba2820a8), last accessed 2021-08-18.
+These are no polygon data for the assessment period.
 
-These are polygon data. All sites are taken into account.
-
-```{r}
+```{r eval=FALSE}
 cumi_message("... shellfish (areas) ...")
-mari_3_file <- "Data/Shellfish_mariculture_areas/Shellfish_mariculture_areas.shp"
+mari_3_file <- file.path(myDir,"Data/...")
 mari_3 <- st_read(mari_3_file)
 
-# In this case, MOP is the same as intensity as frequency is not applicable:
 impact_map <- cumi_process_pressure(mari_3,"mariculture","2C")
 
 ```
@@ -1374,117 +1504,263 @@ impact_map <- cumi_process_pressure(mari_3,"mariculture","2C")
 cumi_message("processing extraction and disposal of sediments ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Extraction of sand and gravel](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/683224c3-2fb9-4f2f-b748-bf5ad712d708), last accessed 2021-08-16.
+Data layer from HELCOM, reported by Estonia, Finland and Germany. The data are polygon data.
 
+Extraction depth and the spatial extent of the extraction within the polygon is unknown. Therefore, the complete polygon area is precautionarily treated as loss. All listed sites are assumed active when there was at least one event within the assessment period. Otherwise, no impact was assumed.
 
-The data are represented as polygons. Since the extraction depth and the spatial extent of the extraction within the polygon is unknown, the complete polygon area is currently treated as loss. All listed sites are assumed active or at least disturbed as the expire dates (attribute column 'expire_yea') are either not specified or not before the start of the assessment period.
+Frequency could be evaluated from this data set as the data set has information on the yearly amount. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
-We still ignore inactive sites in the script stopping before the assessment period, as a place holder for future settings, although this has no effect in the current assessment.
+The confidence is rated 'd1t1s1' for Estonia, Finland and Germany and 'd0t0s0' for the other countries:
 
-Frequency cannot be evaluated from this dataset as it is unclear whether the data are complete and values for the extraction amount of zero just are confidential data, missing data or a real non-pressure in a specific year.
+- data quality is rated 1 as the reported extraction amount alone cannot be used (missing information on extraction depth and aereal extent within the extraction site)
+- temporal coverage is rated 1 (we can exclude sites which have not been used within the assessment period)
+- spatial coverage is rated 1 for Estonia, Finland and Germany, 0 for the remaining countries
 
 ```{r}
 cumi_message("... extraction of sand and gravel ...")
-extraction_file <- "Data/Extraction_of_sand_and_gravel/Extraction_of_sand_and_gravel.shp"
-extraction_x <- st_read(extraction_file) %>% filter(expire_yea == 0 | expire_yea > 2010)
+extraction_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/extraction of sand and gravel/Extraction_of_sand_and_gravel/ExtractonSandGravel.shp")
+extraction_x <- st_read(extraction_file) %>% st_zm()
+
+# filter out all sites which had an amount of 0 in all years:
+amountColumns <- c()
+for(myYear in assessmentYears) {amountColumns <- c(amountColumns,paste("amount",myYear,sep=""))}
+# expression to calculate the total amount:
+sum <- paste(amountColumns,collapse='+')
+sumAmount <- paste("(", sum, ")/",length(amountColumns),"> 0")
+filterSum <- function(myLayer,myString) {
+	q <- quote(filter(myLayer,myString))
+	eval(parse(text=sub("myString", myString, deparse(q))))
+}
+extraction_x <- filterSum(extraction_x,sumAmount)
+
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
 impact_map <- cumi_process_pressure(extraction_x,"extraction","3A")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3A = "none")
+impact_map$confidence_3A[impact_map$Territory %in% c("Estonia","Finland","Germany")] <- "d1t1s1"
+impact_map$confidence_3A[! impact_map$Territory %in% c("Estonia","Finland","Germany")] <- "d0t0s0"
+
 ```
 
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Deposit of dredged material sites areas 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/0eebe008-aed9-461a-8c85-e7b32bdab822), last accessed 2021-08-19.
+Data layer with polygon data. All sites are included in the calculation. No loss is included for the footprint as it is unknown to what extent the actual area is being used and typically only a part of the designated area is actively used.
 
+Frequency could be evaluated from this data set as the data set has information on the years in which the deposit occurs per site. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
-These are polygon data. All sites are included in the calculation. No loss is included for the footprint as it is unknown to what extent the actual area is being used and typically only a part of the designated area is actively used.
+The confidence is rated 'd1t3s1':
+
+- data quality is rated 1 as the reported deposition amount alone cannot be used (missing information on deposition height and areal extent within the deposition site)
+- temporal coverage is rated 3 (data from 2021 are missing)
+- spatial coverage is rated 1 (all countries have provided data)
 
 
 ```{r}
 cumi_message("... deposit of dredged material (areas) ...")
-deposit_1_file <- "Data/deposit_areas_11_16/deposit_areas_11_16.shp"
+deposit_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_areas_dissolved.shp")
 deposit_1 <- st_read(deposit_1_file)
+
+# we remove the German data here to take the ones from the correction data instead:
+deposit_1 <- deposit_1 %>% filter(! str_detect(Helcom_sit,"^DE/"))
+deposit_1_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_areas_DE.shp")
+deposit_1_de <- st_read(deposit_1_de_file) %>% select(geometry)
+
+# the correction from Sweden seems to be an update for most site, but there are two new sites which we include:
+deposit_1_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/SE Helcom/HELCOM_Deposit_polygon.shp")
+deposit_1_se <- st_read(deposit_1_se_file) %>%
+	st_transform(coordSystem) %>%
+	st_zm() %>%
+	filter(Deposit_id %in% c("SE362","SE490")) %>%
+	select(geometry)
+
+# put all data together:
+# as we currently do not evaluate frequency, we can reduce the data to only contain the geometry.
+# This makes it easier to include the correction data
+deposit_1 <- select(deposit_1,geometry) %>% rbind(.,deposit_1_de,deposit_1_se)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
 impact_map <- cumi_process_pressure(deposit_1,"depositing","3B")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3B = "d1t3s1")
+
 ```
 
 
+Data layer with point data. All sites are included in the calculation. No loss is included for the footprint as it is unknown to what extent the actual area is being used and typically only a part of the designated area is actively used.
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Deposit of dredged material sites points 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/34bf84a1-1f04-40c7-99dd-9b9aff4523ea), last accessed 2021-08-19.
+Frequency could be evaluated from this data set for some sites in some countries (Germany, Sweden) as the data set has information on the years in which the deposit occurs per site. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
+The confidence is rated 'd1t3s1':
 
-These are point data. All sites are included in the calculation. No loss is included for the footprint as the size of the footprint is unknown.
+- data quality is rated 1 as the reported deposition amount alone cannot be used (missing information on deposition height and areal extent within the deposition site)
+- temporal coverage is rated 3 (data from 2021 are missing)
+- spatial coverage is rated 1 (all countries have provided data)
+
 
 
 ```{r}
 cumi_message("... deposit of dredged material (points) ...")
-deposit_2_file <- "Data/deposit_points_11_16/deposit_points_11_16.shp"
+deposit_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_points.shp")
 deposit_2 <- st_read(deposit_2_file)
+
+# corrections from DE:
+deposit_2_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_points_DE.shp")
+deposit_2_de <- st_read(deposit_2_de_file)
+# remove all entries from main data that have DE corrections:
+de_corr <- deposit_2_de$Helcom_sit
+deposit_2 <- deposit_2 %>% filter(! Helcom_sit %in% de_corr)
+# prepare DE data for inclusion:
+deposit_2_de <- select(deposit_2_de,geometry)
+
+# the same game for SE data corrections:
+deposit_2_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/SE Helcom/HELCOM_Deposit_point.shp")
+deposit_2_se <- st_read(deposit_2_se_file) %>% st_transform(coordSystem)
+# remove all entries from main data that have SE corrections:
+se_corr <- deposit_2_se$Deposit_id
+deposit_2 <- deposit_2 %>% filter(! Helcom_sit %in% se_corr)
+# prepare SE data for inclusion:
+deposit_2_se <- select(deposit_2_de,geometry)
+
+deposit_2 <- select(deposit_2,geometry) %>% rbind(.,deposit_2_de,deposit_2_se)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
 impact_map <- cumi_process_pressure(deposit_2,"depositing","3C")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3C = "d1t3s1")
+
 ```
 
+Germany and Sweden also have provided line data for deposits.
 
+The confidence is rated 'd1t0s1':
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Dredging areas 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/2a0fbdfd-9aef-4d2e-9129-2d1cc3b4943b), last accessed 2021-08-19.
+- data quality is rated 1 as the reported deposition amount alone cannot be used (missing information on deposition height and areal extent within the deposition site)
+- temporal coverage is rated 0 (the data is assumed to only cover one-time events and no information is given for the other assessment years)
+- spatial coverage is rated 1 (assumed taht all countries have provided data)
 
-The data layer contains polygon data. The attribute column "DREDGING_A" makes a distinction between maintenance and capital dredging (but there is no specifications as to how these types are distinguished). Further, the dredging type can be 'environmental', 'x' or empty. As a good definition is missing, only sites marked specifically as capital dredging are treated as such. All other sites are treated as maintenance dredging.
 
 ```{r}
-cumi_message("... capital dredging (areas) ...")
-dredge_a_file <- "Data/Dredging_areas/Dredging_areas.shp"
-dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A=="capital")
+deposit_3_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_lines.shp")
+deposit_3 <- st_read(deposit_3_file)
+# one of the German entries here seems having a truncated ID as the same site appears in the DE update with a full ID.
+# We change it here
+deposit_3$Helcom_sit[deposit_3$Helcom_sit == "14"] <- "DE/14"
+deposit_3$Dredging_I[deposit_3$Helcom_sit == "DE/14"] <- "DE/14-2016-1"
+
+# it seems the German update replaces the complete German set:
+deposit_3_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_lines_DE.shp")
+deposit_3_de <- st_read(deposit_3_de_file) %>% select(geometry)
+deposit_3 <- filter(deposit_3,! str_detect(Helcom_sit,"^DE/")) %>% select(geometry)
+
+deposit_3 <- rbind(deposit_3,deposit_3_de)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_1,"dredging CAP","3D")
+impact_map <- cumi_process_pressure(deposit_3,"depositing","3D")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3D = "d1t0s1")
+```
 
+This data set represent dredging, as reported for HOLAS3 ad hoc data call and data reported according to Recommendation 36/2.  
+
+The data layer contains polygon data for maintenance dredging. There is information on the start and end year wioch could be used for a frequency evaluation (see proposal below). The field "depth" is assumed to mean the water depth.
+
+The confidence is rated 'd1t0s1':
+
+- data quality is rated 1 as the reported dredging amount alone cannot be used (missing information on dredging depth  and areal extent within the dredging site)
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
+
+```{r}
 cumi_message("... maintenance dredging (areas) ...")
-dredge_2 <- st_read(dredge_a_file) %>% st_zm() %>% filter(DREDGING_A != "capital")
+dredge_a_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/dredging/dredging_mainteinance/dredgingmantainance_poly.shp")
+dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% select(geometry)
+
+# the original HOLAS III file does not contain any SE data:
+# SE data (the only valid file is the one from 2022-07-01, the one from the day before did not contain everything):
+dredge_1_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Dredging/polygonCopy.shp")
+dredge_1_se <- st_read(dredge_1_se_file) %>% select(geometry)
+
+# corrected DE data (comparing the initial HOLAS III and the update, these are different sites and years
+# and both are kept):
+dredge_1_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_areas_DE.shp")
+dredge_1_de <- st_read(dredge_1_de_file) %>% st_make_valid() 
+# one site is marked "capital", so we save that ine as capital dredging:
+dredge_2 <- filter(dredge_1_de,Dredging_a == "capital")
+dredge_1_de <- dredge_1_de %>% filter(! Dredging_a == "capital") %>% select(geometry)
+
+dredge_1 <- rbind(dredge_1,dredge_1_de,dredge_1_se)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_2,"dredging M","3E")
+impact_map <- cumi_process_pressure(dredge_1,"dredging M","3E")
+
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3E = "d1t0s1")
+
+
+cumi_message("... capital dredging (areas) ...")
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(dredge_2,"dredging CAP","3F")
+
+impact_map <- impact_map %>% mutate(confidence_3F = "d1t0s1")
 
 ```
 
+Point data labelled 'maintenence', so the amount is ignored and the 5000 m^3^ threshold ignored. Most data do have information on the dredging amount.
 
+The confidence is rated 'd1t0s1':
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Dredging points 2011-2016](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/bb6622b7-e5df-4637-8ebe-c2736e705a70), last accessed 2021-08-19.
-
-The data layer contains point data. The attribute column "TYPE" makes a distinction between maintenance and capital dredging (but there is no specifications as to how these types are distinguished). Further, this attribute column contains many values that are not covered by the metadata specification. As a good definition is missing, only sites marked specifically as 'capital' or 'Capital' dredging in the "TYPE" attribute are treated as such. All other sites are treated as maintenance dredging.
-
-The dredged amount is reported in the data as weight in tonnes. The CumI follows the recommendation of HGELCOM EN DREDS and uses an amount in terms of the volume (5,000 m^3^) as threshold between two different buffer models (see `cumi_buffers`). As the volume is not reported, a transformation of the data is needed. The density of sediments varies roughly between 1.1 and 2.5 g/cm^3^. Since the type of the dredged material is unknown, we here use an average density of 1.8 g/cm^3^.
-
-Further, the dredged amount is not reported in all instances. When the amount is not known, it is assumed to be below 5000 m^3^.
+- data quality is rated 1 as the reported dredging amount alone cannot be used (missing information on dredging depth  and areal extent within the dredging site) and most sites do no report the amount
+- temporal coverage is rated 0 (as temporal information is not yet used and mostly not available)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
 
 
 ```{r}
-cumi_message("... capital dredging (points) ...")
-dredge_p_file <- "Data/Dredg_points/Dredg_points.shp"
-dredge_3 <- st_read(dredge_p_file) %>% filter(Type %in% c("capital","Capital"))
+cumi_message("... maintenence dredging (points) ...")
+dredge_p_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/dredging/dredging_mainteinance/dredgingmantainance_point.shp")
+dredge_3 <- st_read(dredge_p_file) %>% st_zm() %>% select(geometry)
 
-# the 'Amount_ton' column is a character type with commas, so produce a proper 'volume' column:
-dredge_3 <- dredge_3 %>% mutate(volume = as.numeric(sub(",",".",Amount_ton))/1.8)
+# SE data:
+dredge_p_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Dredging/point.shp")
+dredge_p_se <- st_read(dredge_p_se_file) %>% select(geometry)
 
-# In this case, MOP is the same as intensity as frequency is currently ignored:
-# above 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume>5000),"dredging CAP2","3F")
-# below or equal to 5000m3:
-impact_map <- cumi_process_pressure(filter(dredge_3,volume<=5000 | is.na(Amount_ton)),"dredging CAP1","3G")
+# DE data:
+dredge_p_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_points_DE.shp")
+dredge_p_de <- st_read(dredge_p_de_file) %>% select(geometry)
 
-
-
-cumi_message("... maintenance dredging (points) ...")
-dredge_4 <- st_read(dredge_p_file) %>% filter(! Type %in% c("capital","Capital"))
+dredge_3 <- rbind(dredge_3,dredge_p_se,dredge_p_de)
 
 # In this case, MOP is the same as intensity as frequency is currently ignored:
-impact_map <- cumi_process_pressure(dredge_4,"dredging M","3H")
+impact_map <- cumi_process_pressure(dredge_3,"dredging M","3G")
 
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3G = "d1t0s1")
 ```
+
+Line data from German, no amount reported, maintenance dredging assumed:
+
+The confidence is rated 'd1t0s1':
+
+- data quality is rated 1 as the dredging amount is not reported
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
+
+```{r}
+dredge_l_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_lines_DE.shp")
+
+dredge_l <- st_read(dredge_l_file)
+
+# In this case, MOP is the same as intensity as frequency is currently ignored:
+impact_map <- cumi_process_pressure(dredge_l,"dredging M","3H")
+
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_3H = "d1t0s1")
+```
+
 
 
 ### 4. Pipelines and cables
@@ -1493,44 +1769,95 @@ impact_map <- cumi_process_pressure(dredge_4,"dredging M","3H")
 cumi_message("processing pipelines and cables ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Pipelines](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/5260249e-5850-431a-b130-3a096abac852), last accessed 2021-08-13.
+Polygon data. Pipelines in planning are ignored. Data with empty Status are assumed 'operational'. For SE, HOLAS II data should be applied. However, the HOLAS II data do not contain pipelines assigned to SE.
 
+The confidence is rated 'd1t0s1':
 
-These are polyline data. There are no pipelines under construction in the dataset (attribute column 'Status'), thus only operational pipelines are included in the current assessment.
+- data quality is rated 1 as there are no quantitative data on trenches nd amounts
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
+
 
 ```{r}
-cumi_message("... pipelines in operation (there are none under construction) ...")
-pipeline_file <- "Data/Pipelines/Pipelines.shp"
-pipeline_o <- st_read(pipeline_file) %>% filter(Status %in% (c('Operational','Unknown')))
+cumi_message("... pipelines ...")
+pipeline_file1 <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/pipelines/PIPELINE/Pipelines_polygons.shp")
+
+# piplines under construction:
+pipeline_c <- st_read(pipeline_file1) %>% st_zm() %>%
+	filter(Status == "under construction") %>%
+	select(geometry)
+
+pipeline_file1 <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/pipelines/PIPELINE/PIPELINE_append.shp")
+
+# pipelines in operation:
+# ignore "planned", treat NULL as operational:
+pipeline_o1 <- st_read(pipeline_file1) %>% filter(Status %in% c("operational","built but not in use"))
+pipeline_o2 <- st_read(pipeline_file1) %>% filter(is.na(Status))
+pipeline_o <- rbind(pipline_o1,pipeline_o2)
+
+# there is an updated data set from DE, but the Status is either "aslaid" or "4", both of which cannot be interpreted.
 
 # In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","4A")
+impact_map <- cumi_process_pressure(pipeline_c,"pipeline C","4A")
+impact_map <- impact_map %>% mutate(confidence_4A = "d1t0s1")
 
+impact_map <- cumi_process_pressure(pipeline_o,"pipeline O","4B")
+impact_map <- impact_map %>% mutate(confidence_4B = "d1t0s1")
 ```
 
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Cables](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/c0e73e71-cafb-4422-a3a3-115687fd5c49), last accessed 2021-08-09.
+Cable data.
 
-These are polyline data. The data is divided according to the status being 'Under construction' and 'Operational'.
+The confidence is rated 'd1t0s1':
+
+- data quality is rated 1 as there are no quantitative data
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
+
 
 ```{r}
-cumi_message("... cables under construction ...")
-# remove z-coord and take the features with status="Under construction":
-cable_file <- "Data/Cables/Cables.shp"
-cable_c <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Under construction')
-
-
-# In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(cable_c,"cable C","4B")
-
-
-
 cumi_message("... cables in operation ...")
-# remove z-coord and take the features with status="Operational":
-cable_o <- st_read(cable_file) %>% st_zm() %>% filter(Status == 'Operational')
+# the file CABLES_polygones.shp does only have cables in planning or where application is submitted.
+# Thus, there is no cable yet and the data can be ignored.
+# The "append" file only has various forms of cable in operation and none under construction:
+cable_o_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/cables/CABLES/CABLES_append.shp")
+cable_o <- st_read(cable_o_file) %>%
+	filter(Status %in% c('Operational', 'operational','completed','Out of use','Unknown')) %>%
+	select(geometry) %>%
+	st_cast("LINESTRING")
+
+# all assumed to be after construction, i.e. in operation (Status = '4', '11', 'in Probebetrieb'):
+cable_o2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_DE_HA/CABLES.shp")
+cable_o2 <- st_read(cable_o2_file) %>%
+	st_zm() %>%
+	select(geometry) %>%
+	st_cast("LINESTRING")
+
+cable_o <- rbind(cable_o, cable_o2)
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
+## this step notoriously fails with an error due to MULTILINESTRINGS
+## and missing function arguments in some intermediate step.
+### Alternative is to dissect cumi_process_pressure into manual steps:
+### - intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
+intensity_layer <- cumi_buffer_intensity(cable_o,"cable O")
+st_write(intensity_layer,file.path(myDir,"Results/tmp1.shp"))
+st_write(impact_map,file.path(myDir,"Results/tmp2.shp"))
+### - union intensity_layer with impact_map in ArcGIS
+readline(prompt="Make sure you have the ArcGIS union result ready as 'impact_map' here: ")
+### - apply impact in R
+# (the last line st_cast will also remove some nasty LINESTRING and MULTILINESTRING)
+impact_map <- impact_map %>%
+	dplyr::mutate(impact_4C := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
+	dplyr::select(-intensity) %>%
+	filter(! is.na(Biotope)) %>%
+	st_make_valid() %>%
+	st_cast("MULTIPOLYGON")
+
+#impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
+
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_4C = "d1t0s1")
 ```
 
 
@@ -1541,42 +1868,39 @@ impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
 cumi_message("processing platforms and wind farms ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Oil platforms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/fddc27ec-b6ae-407b-9dd8-f31a42d75412), last accessed 2021-08-19.
+These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss.
 
-These are point data. As we do not know from the data which kind of fundament the platforms have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss since platforms typically only have pylones and not the entire area of the platform is equivalent to lost habitat area. Further, as not explicitly stated in the metadata, the platforms as assumed to be "in operation".
+The German data also include information about the fundament type. The monopiles are treated as loss.
+
+The confidence is rated 'd1t0s1':
+
+- data quality is rated 1 as there are no quantitative data
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
 
 ```{r}
-cumi_message("... oil platforms ...")
-oil_file <- "Data/Oil_platforms/Oil_platforms.shp"
-oil_x <- st_read(oil_file)
+cumi_message("... wind farms in operation ...")
+# the file only seems to contains turbines, at least there is no information on transformer platforms included:
+wind_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/wind farms/Wind farms_operational/WINDTURBINES_append.shp")
+wind_x <- st_read(wind_file) %>% select(geometry)
+
+# German data (reading this file will result in warnings on the content of the field
+# Pcapacity which we can ignore):
+wind_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_DE_HA/WIND TURBINES.shp")
+wind_de <- st_read(wind_de_file)
+
+wind_x2 <- filter(wind_de,! Foundation == "monopile") %>% select(geometry)
+wind_x <- rbind(wind_x,wind_x2)
 
 # In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(oil_x,"platform O","5A")
-```
+impact_map <- cumi_process_pressure(wind_x,"OWF O","5A")
+impact_map <- impact_map %>% mutate(confidence_5A = "d1t0s1")
 
-
-
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Wind farms](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/80de3bc3-e3ec-474e-8ae8-4b29c205eb0a), last accessed 2021-08-13.
-
-
-These are point data. The 'Status' attribute lists some turbines 'Under construction' and some as 'Generating power'. The latter are taken as 'in operation'. Turbines with status 'Transformer' are not strictly turbines but transformer station. As there are only three of them in the dataset, they are also interpreted as being 'in operation' and treated as regular turbines. It can be considered to treat them differently in the future. According to ICES WKBEDLOSS, a radius of 15 m could be used for "offshore transformer stations or modules" (OTS/OTM).
-
-As we do not know from the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss. Currently, we do not treat the the footprint as loss.
-
-```{r}
-cumi_message("... OWF under construction ...")
-owf_file <- "Data/Wind_turbines/wind_turbines.shp"
-owf_c <- st_read(owf_file) %>% filter(Status == "Under construction")
-
-# In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_c,"OWF C","5B")
-
-
-cumi_message("... OWF in operation ...")
-owf_o <- st_read(owf_file) %>% filter(Status %in% (c('Generating power','Transformer')))
-# In this case, MOP is the same as intensity as frequency does not apply
-impact_map <- cumi_process_pressure(owf_o,"OWF O","5C")
-
+# now the monopiles:
+wind_de <- filter(wind_de,Foundation == "monopile")
+# In this case, MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(wind_de,"OWF O mono","5B")
+impact_map <- impact_map %>% mutate(confidence_5B = "d1t0s1")
 ```
 
 
@@ -1586,137 +1910,175 @@ impact_map <- cumi_process_pressure(owf_o,"OWF O","5C")
 cumi_message("processing coastal protection ...")
 ```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Human activities > Coastal defense](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/2d47c5ea-4590-465f-a462-60ef59d3d7d3), last accessed 2021-08-12.
+Various data sets are included here.
 
-These are polyline data and the interesting attributes in the data are (description taken from HECLOM metadata page on this dataset):
+The main file is polygon data and contains data with status 'operational' and 'executed'. The latter is interpreted as being 'operational' also. Also data without status are treated as 'operational' as they typically have a 'year' attribute with a value earlier than 2021. Another set of polygon data is provided by SE. It has no information on the status and is treated as 'operational'.
 
-- Const\_year: Year of construction; for some structure in Estonia the construction year is not known and this is marked as no data (ND)
-- Estimated: Estimated date of completion if under construction (Estonia) or the year of environmental permit if year of construction is lacking (Finland)
-- Out\_of\_use: Year when costal defence structure has been taken out of use
+The same applies to the main point data and the SE point data.
 
+The line data have status such as 'reconstruction', 'new building', 'operational', 'executed', 'Gældende' and NULL (for older HOLAS II data). All of these are treated as operational. For many of the DK data, it cannot be seen whether it has an impact on the marine environment at all, so these data are used under the assumption that they have. Some older HOLAS II data are marked as 'Under construction' and are consequently treated as such.
 
-The data has an attribute 'Estimated' containg some years from the assessment period. It is not clear whether this means the objects were constructed earlier and finalised in the assessment period. Thus, only the objects having 'Const_year="Under construction"' are currently used.
+The confidence is rated 'd1t0s1':
+
+- data quality is rated 1 as there are no quantitative data
+- temporal coverage is rated 0 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
 
 ```{r}
-cumi_message("... coastal protection under construction ...")
-# take the features with Const_year="Under construction":
-coastalDef_file <- "Data/Coastal_defense/Coastal_defense.shp"
-coastalDef_c <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% filter(Const_year == 'Under construction')
+# main polygon data, all treated as operational:
+def_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefense_polygons.shp")
+def_1 <- st_read(def_1_file) %>% st_zm() %>% st_make_valid() %>% select(geometry)
 
-# In this case, MOP is the same as intensity as frequency does not apply:
-# (there is only one construction event)
-impact_map <- cumi_process_pressure(coastalDef_c,"coastalDef C","6A")
+# SE polygon data, treated as operational:
+def_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Coastal defence/coastal_defence_3035.shp")
+def_2 <- st_read(def_2_file) %>% st_zm() %>% select(geometry)
 
+# main point data, all treated as operational:
+def_3_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefense_points.shp")
+def_3 <- st_read(def_3_file) %>% select(geometry)
+
+# SE point data, no information on status, treated as operational:
+def_4_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Coastal defence/coastal_defence_point_3035.shp")
+def_4 <- st_read(def_4_file) %>% st_transform(coordSystem) %>% select(geometry)
+
+# line data:
+def_5_file <- file.path(myDir, "../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefence_lines_APPEND.shp")
+def_5 <- st_read(def_5_file)
+def_5_o1 <- filter(def_5, Status %in% c('reconstruction', 'new building', 'operational', 'executed', 'Gældende'))
+def_5_o2 <- filter(def_5, is.na(Status))
+coastalDef_line_constr <- filter(def_5, Status == "Under construction")
 
 
 cumi_message("... coastal protection in operation ...")
-# take the features where Const_year is null or is a 4-digit year or is 'ND':
-coastalDef_o <- st_read(coastalDef_file) %>% st_transform(coordSystem) %>% 
-		filter(Const_year > 0 || is.na(Const_year) || Const_year == 'ND')
 
-# In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(coastalDef_o,"coastalDef O","6B")
-```
+# polygon data:
+coastalDef_polygon <- rbind(def_1,def_2)
+# MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(coastalDef_polygon,"coastalDef O","6A")
+impact_map <- impact_map %>% mutate(confidence_6A = "d1t0s1")
+
+# point data:
+coastalDef_point <- rbind(def_3,def_4)
+# MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(coastalDef_point,"coastalDef O","6B")
+impact_map <- impact_map %>% mutate(confidence_6B = "d1t0s1")
+
+# line data:
+coastalDef_line <- rbind(def_5_o1,def_5_o2)
+# MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(coastalDef_line,"coastalDef O","6C")
+impact_map <- impact_map %>% mutate(confidence_6C = "d1t0s1")
 
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Harbours](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/e2a3a104-a7aa-49c9-bc2c-47845b3a322f), last accessed 2021-08-20.
+cumi_message("... coastal protection under construction ...")
 
-This dataset provides harbours as polygons. All harbours are included in the assesment. The dataset also contains point data. These are derived from the polygon data for the estimation of port visits and is not dealt with here.
+# line data:
+# MOP is the same as intensity as frequency does not apply:
+impact_map <- cumi_process_pressure(coastalDef_line_constr,"coastalDef C","6D")
+impact_map <- impact_map %>% mutate(confidence_6D = "d1t0s1")
 
-```{r}
-cumi_message("... harbours (areas) ...")
-harbour_file = "Data/Harbours/Harbour_polygons.shp"
-harbour_o <- st_read(harbour_file)
-
-# In this case, MOP is the same as intensity as frequency does not apply:
-impact_map <- cumi_process_pressure(harbour_o,"harbour O","6C")
 ```
 
 
 ### 7. Shipping
 
+The shipping data are yearly density measurements (period 2016-2020) based on all IMO registered ships operating in the Baltic Sea. Shipping density is defined as the number of ships crossing a 1 x 1km grid cell. The raw AIS data used for creating the density maps is based on HELCOM AIS (Automatic Identification System) data. The HELCOM AIS network hosts all the AIS signals received by the Baltic Sea States since 2005.
+
+The confidence is rated 'd3t3s1':
+
+- data quality is rated 3 as there are quantitative measured data
+- temporal coverage is rated 3 (as temporal information is not yet used)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
+
+
 ```{r}
 cumi_message("processing shipping ...")
-```
 
-Data layer from HELCOM: [Pressures > Baltic Sea Pressure and Impact Index > Shipping density 2011-2015](http://metadata.helcom.fi/geonetwork/srv/eng/catalog.search#/metadata/1fd5298f-d3be-4c5f-bb05-3dc66a8eea6b), last accessed 2021-08-20.
+ship_folder <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shipping/All ship types")
 
-The dataset contains polygon data. This script uses a pre-processed version of the HELCOM dataset. *The next version of this script will include the pre-processing prodedure in R*. These step were involved in order to arrive at the data layer used here:
+# note: I had to rename the file with the 2020 data since the filename was missing an 's'
+# compared to the files for the other years:
+myFiles <- c()
+for (myYear in assessmentYears[1:5]) {
+	myRaster <- paste(myYear," All shiptypes AIS Shipping Density.tif",sep="")
+	myFiles <- c(myFiles,file.path(ship_folder,myRaster))
+}
 
-1. use the layer "2011-2015_all_ship_types_MEAN/2011-2015_all_ship_types_MEAN.tif" from the above HELCOM dataset
-2. vectorise the data and assign coordinate system EPSG:3035 (the raster value is put into an attribute column named 'density')
-3. remove all polygons with raster value (density) of 0
-4. apply zonal statisitcs (in QGIS: Tools > Raster analysis > Zonal statistics) with the mean of the depth (depth taken from HELCOM layer: “depth relief map” (raster data)) to get an average depth per density polygon (new attribute column named 'depth')
-5. remove all polygons having a depth of 0 or higher (this defines the shoreline and the land)
-6. remove all polygons having no depth value (due to missing overlap between depth data and shipping data)
-7. remove all polygons having a depth value over 25 m (noot inclusing 25 m; there is no impact assumed in these depths)
-8. make a new attribute 'depthzone' and classify depth values into the following classes:
+# calculate the mean density:
+ship_mean <- app(rast(myFiles),mean)
 
+# vectorize:
+ship_vect <- as.polygons(ship_mean,dissolve=FALSE) %>% st_as_sf()
+ship_vect <- filter(ship_vect, mean > 0) %>%
+	st_cast("MULTIPOLYGON") %>%
+	st_cast("POLYGON") %>%
+	rename(density = mean)
 
-```{QGIS eval=FALSE}
-# attribue column 'depthzone':
-CASE
- when "depth"<0 and "depth">=-10 then 1
- when "depth"<-10 and "depth">=-15 then 2
- when "depth"<-15 and "depth">=-20 then 3
- when "depth"<-20 and "depth">=-25 then 4
-END
-```
+# add in the average depth per polygon:
+depths <- rast(file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shipping/depth rasters/depth_1x1km.tif"))
+tmp <- terra::extract(depths,ship_vect, 'mean')
+ship_vect <- cbind(ship_vect,tmp) %>% st_as_sf() %>% rename(depth = depth_1x1km)
 
-9. translate the density depending on the depthzone into a new attribute column ‘intensity’:
+# remove all data below 25m depth (= no impact assumed)
+ship_vect <- filter(ship_vect,depth <= 25)
 
+# classify depths into zones:
+ship_vect <- mutate(ship_vect, depthzone = case_when(
+ depth > 0 & depth <= 10 ~ 1,
+ depth > 10 & depth <= 15 ~ 2,
+ depth > 15 & depth <= 20 ~ 3,
+ depth > 20 & depth <= 25 ~ 4,
+ TRUE ~ 0
+))
 
-```{QGIS eval=FALSE}
+# translate the density depending on the depthzone into a new attribute column ‘intensity’:
 # Weighted with depth:
-# dephtzone 1: eqiuv. to 100 % => density value is taken directly
+# dephtzone 1: equiv. to 100 % => density value is taken directly
 # depthzone 2: equiv. to  50 % => density value divided by 2
 # depthzone 3: equiv. to  25 % => density value divided by 4
 # depthzone 4: equiv. to  10 % => density value divided by 10
 # depthzone 5: equiv. to	0 % => polygon is removed (everything over 25 m)
 
 # new attribute column 'intensity':
-CASE
- when "depthzone"=1 then "density"
- when "depthzone"=2 then "density"/2.0 
- when "depthzone"=3 then "density"/4.0 
- when "depthzone"=4 then "density"/10.0 
-END
-```
+#
+# doesn't work, where's the error? (done in QGIS instead)
+#
+ship_vect <- mutate(ship_vect, intensity = case_when(
+  depthzone == 1 ~ paste0(density),
+  depthzone == 2 ~ paste0(density/2.0),
+  depthzone == 3 ~ paste0(density/4.0),
+  depthzone == 4 ~ paste0(density/10.0),
+  TRUE ~ 0 
+))
 
-10. reclassify the intensity into the four MOP classes (we must ignore frequency at this stage as the data do not contain information on the shipping frequency). After the above steps, intensity values from 0 to 32166 remain. These are divided pragmatically into the uniform CumI scale:
-
-```{QGIS eval=FALSE}
 # new attribute column 'MOP':
-CASE
-when "intensity" >=	  0 and "intensity" <	8041 then 'very low'
-when "intensity" >=  8041 and "intensity" <  16083 then 'low'
-when "intensity" >= 16083 and "intensity" <  24124 then 'moderate'
-when "intensity" >= 24124 and "intensity" <= 32166 then 'high'
-END
-```
-
-11. dissolve the polygons by MOP only to reduce file size and risk of artifacts.
-
-
-
-For now, we work with the pre-calculated data in our dataset:
-
-
-```{r}
-shipping_file <- "Data/Shipping (AIS-density)/shipping-pre-calculated.shp"
-shipping_x <- st_read(shipping_file) %>% st_make_valid()
-# we only have left to combine with the biotope layer
-# (following the same approach as in cumi_process_pressure()):
+# reclassify the intensity into the four MOP classes
+# (we ignore frequency at this stage, usinf the maverage density for now, 
+# but frequency can be included following the proposal below).
 #
-# you may want to take out the union from here and perform this individual action in ArcGIS,
-# as this will cut down the processing time from approx. 8 hours to under a minute ...
-#
+# After the above steps, intensity values from 0 to 32166 remain. These are divided pragmatically into the uniform CumI scale:
+maxDens <- max(ship_vect$intensity)
+ship_vect <- mutate(ship_vect, MOP = case_when(
+ intensity >=	  0 & intensity <	maxDens/4 ~ 'very low',
+ intensity >=  maxDens/4 & intensity <  maxDens/2 ~ 'low',
+ intensity >= maxDens/2 & intensity <  maxDens/4*3 ~ 'moderate',
+ intensity >= maxDens/4*3 & intensity <= maxDens ~ 'high',
+ TRUE ~ 'unknown'
+))
+
+# dissolve the polygons by MOP only to reduce file size and risk of artifacts.
+ship_vect <- ship_vect %>% group_by(MOP) %>% summarize() %>% st_cast("MULTIPOLYGON")
+
+# the union in the following statement took roughly 20 hours on my machine using the QGIS function, on ArGIS the union fails with an unspecific error:
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-	my_union(shipping_x) %>% 
+	my_union(ship_vect) %>% 
 	dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
 	dplyr::select(-c(MOP)) %>%
 	rename_geometry("geometry") %>%
 	filter(! is.na(Biotope))
+
+# confidence:
+impact_map <- impact_map %>% mutate(confidence_7 = "d3t3s1")
 ```
 
 
@@ -1788,36 +2150,95 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 - Sal = bottom salinity class (from HELCOM BALANCE project)
 - Sal2 = bottom salinity value range (from HELCOM BALANCE project)
 - impact_xx = CumI impact category for the component specified by 'xx':
-	- 1: Bottom trawling fishery (surface abrasion), rastered data
+	- 1: Bottom trawling fishery (surface abrasion), raster data
 	- 2A: Finfish mariculture, point data
 	- 2B: Shellfish mariculture, point data
-	- 2C: Shellfish mariculture, polygon data
 	- 3A: Extraction of sand and gravel, polygon data
 	- 3B: Deposit of dredged material, polygon data
 	- 3C: Deposit of dredged material, point data
-	- 3D: Capital dredging, polygon data
+	- 3D: Deposit of dredged material, polyline data
 	- 3E: Maintenance dredging, polygon data
-	- 3F: Capital dredging above 5000m3, point data
-	- 3G: Capital dredging below or equal 5000m3, point data
-	- 3H: Maintenance dredging, point data
-	- 4A: Pipelines in operation, polyline data
-	- 4B: Cables under construction, polyline data
-	- 4C: Cables in operation, polyline data
-	- 5A: Oil platforms, point data
-	- 5B: OWF under construction, point data
-	- 5C: OWF in operation, point data
-	- 6A: Coastal protection under construction, polyline data
-	- 6B: Coastal protection in operation, polyline data
-	- 6C: Harbours, polygon data
-	- 7: Shipping, polygon data
+	- 3F: Capital dredging, polygon data
+	- 3G: Maintenance dredging, point data
+	- 3H: Maintenance dredging, polyline data
+	- 4A: Pipelines under construction, polygon data
+	- 4B: Pipelines in operation, polygon data
+	- 4C: Cables in operation, polygon data
+	- 5A: OWF in operation, point data
+	- 5B: OWF (minopiles) in operation, point data
+	- 6A: Coastal protection in operation, polygon data
+	- 6B: Coastal protection in operation, point data
+	- 6C: Coastal protection in operation, polyline data
+	- 6D: Coastal protection under construction, polyline data
+	- 7: Shipping, raster data
 - cumi: the final cumulative impact category
 	
 # Limitations in the assessment
 
-- no differentiation of fishing pressure accoring to geat type
+- currently only preliminary assignment of sensitivities to MSFD offshore biotopes
+- no salinity information in "Limfjord" area and a few other bays and fjords
+- no differentiation of fishing pressure according to gear type
+- available frequency information not yet used (see next section)
+- wind turbine fundament information currently not utilized
+- change: the footprint of pipelines under construction is now being treated as 'loss'
+- change: a buffer model for monopile fundaments for wind turbines is used which is identical to the original model, only change is that the footprint is treated as loss
+
+## Pressure frequency
+Frequency is currently not used in the assessment as there was no frequency information for the former data set (years 2011-2016) and thus it could not be part of the CumI development and testing phase. To keep the current assessment as close as possible to the one agreed for HOLAS III, frequency is still left out although some of the current data sets do now carry information on pressure frequency.
+
+In the agreed CumI method, frequency is only determined on the basis of the number of pressure events per yes. However, this kind of information seems to represent a rare case. We much more often have frequency in terms of "in how many of the 6 assessment years did the pressure occur?". So, for this kind of data the frequency can be interpreted as:
+
+* occasional = occurs in 1 (of 6) years
+* regular = occurs in 2-3 years
+* frequent = occurs in 4-5 years
+* persistent = occurs in all 6 years
+
+This approach can be implemented for the updated data sets and used in HOLAS III if agreed upon during the review phase of the assessment results.
+
+# Confidence assessment
+
+For the area for which pressure data are present, the confidence of the assessment is rated according to the categories below. The confidence rating is written as a string in the format 'dxtxsx' where the letters d, t and s stand for the three categories (**d**ata quality, **t**emporal coverage and **s**patial coverage) and the 'x' stands for the numbers within the categories below. Thus, for example, 'd2t3s1' means: data present, quantitative and based on model - 5-6 years are covered within the assessment period of 6 years - and data are present for this particular polygon.
+
+When a pressure occurs but information is missing to assess it, the string will be 'd0t0s0'. This is the only case where all three categories are rated 0.
+
+When not data or information is present for a particular area and thus the MOP/impact cannot be determined, the string 'none' is used for the confidence.
+
+With this notation, we can distinguish between the following situations:
+
+| Data    | Pressure | impact | confidence | remark
+|---------|----------|--------|------------|--------
+| present | yes      | yes    | 'dxtxsx'   | impact is 'very low', 'low' and so on
+| present | no       | 'none' | 'dxtxsx'   | when it is known from the data that the pressure does not occur
+| no      | yes      | 'none' | 'd0t0s0'   | case of missing information for a pressure known to occur
+| no      | no       | 'none' | 'none'     | when it is known that the pressure does not occur
+
+Currently, no method has been decided for an aggregation of the pressure-specific ratings to an overall confidence score for the whole assessment.
+
+## Data quality
+This rating gives information about the nature of the supplied data. The higher the quality of the data and the more information is present in the data, the higher the rating will be. Data can be based on a model, meaning that the applied buffer model in CumI relies on some general considerations on the extent and magnitude of the various MOP zones without being backed up by concrete data. Currently, only the bottom trawling data use real measurements to determine where the MOP zones are located.
+
+* 0. No spatial data present (per pressure and country), only assumptions
+* 1. Data present and qualitative
+* 2. Data present, quantitative and based on model
+* 3. Quantitative data based on real measurements
+
+## Temporal coverage
+All pressure data are supposed to cover the whole assessment period of six years. When a year ore more is missing in the data set or no information on the temporal distribution of the pressure is available, the rating is lower.
+
+* 0. No information available on temporal coverage
+* 1. 1-2 years are covered within the assessment period of 6 years
+* 2. 3-4 years
+* 3. 5-6 years
+
+## Spatial coverage
+When a specific region or country does not report data and it is known that the pressure occurs in that area, this information can be documented here. It can be rated per pressure polygon but is typicall used country-wide.
+
+* 0. No data present
+* 1. Data present
+
 
 # Outlook
-This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
+This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM data set. In the near future, new data set will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
 
 Apart from this, the following updates are planned for the next version:
 
@@ -1827,7 +2248,7 @@ Apart from this, the following updates are planned for the next version:
 - a distinction between 'no data' and 'no impact' will be implemented
 - provide a switch to keep the MOP attribute per pressure in the impact map
 - provide a switch to keep the partial impact maps after combining with an individual pressure (in order to easily continue after errors with a particular pressure)
-- provide all GIS data as one Geopackage file instaed of the mess with shapefiles
+- provide all GIS data as one Geopackage file instead of the mess with shapefiles
 
 [^1]: <https://www.emodnet-seabedhabitats.eu/files/C20211007_EUSeaMap_2021_Baltic_Sea.zip>
 [^2]: <https://www.emodnet-seabedhabitats.eu/files/C20211008_EUSeaMap_2021_Arctic_Atlantic.zip>
