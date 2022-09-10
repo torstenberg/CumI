@@ -28,7 +28,7 @@ If you do not want to evaluate the R code, but just render the document, use `kn
 
 # General setup
 
-For the assessment for work with this script, all data files need to be present on your computer. The data are GIS files from various sources and they need to have specific file names and attribute table columns to work directly with this script. A folder "Data" comes together with this script and enables you to run the current assessment without changing the script, as long as the script is in the same directory as the 'Data' folder and the Data folder is filled witht the necessary data folders and fines:
+For the assessment for work with this script, all data files need to be present on your computer. The data are GIS files from various sources and they need to have specific file names and attribute table columns to work directly with this script. A folder "Data-2022" comes together with this script and enables you to run the current assessment without changing the script, as long as the script is in the same directory as the 'Data-2022' folder and the data folder is filled with the necessary data folders and files.
 
 Set the directory of the data folder in the following code chunk.
 
@@ -554,7 +554,9 @@ cumi_message <- function(msg) {
 # The assessment
 
 ## Setup
-Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps:
+Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps. Further, we define here the list of years for which the assessment is done.
+
+Then, a variable is set which determined whether this script uses some pre-calculated files which otherwise would need a huge amuont of comupting time to assemble.
 
 ```{r}
 cumi_message("setting up the assessment ...")
@@ -588,19 +590,19 @@ The spatial extent of the assessment area is determined by the HELCOM Assessment
 ```{r}
 if (! use_pre_calculated_data) {
 	cumi_message("preparing assessment area layer ...")
-	area_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/_ags_HELCOM_subbasins_2022/HELCOM_subbasins_2022.shp")
+	area_file <- file.path(myDir,"Base/HELCOM_subbasins_2022.shp")
 	areaLayer <- st_read(area_file) %>% dplyr::select(-c(Area_km2,Shape_Leng,Shape_Le_1,Shape_Area)) %>% st_make_valid()
 }
 ```
 
-To enable assigning data to specific countries, the assessment area is supplemented with country information. The countries are taken from the *EMODnet Human Actiities* data file `Emodnet_HA_OtherManagementsAreas_EEZ_20180629`. As the spatial coverage of the country data sometimes is smaller than the coverage of the assessment area, the country area was extended manually on the terrestrial side so the complete assessment area is within a specific country.
+To enable assigning data to specific countries, the assessment area is supplemented with country information. The countries are taken from the *EMODnet Human Activities* data file `Emodnet_HA_OtherManagementsAreas_EEZ_20180629`. As the spatial coverage of the country data sometimes is smaller than the coverage of the assessment area, the country area was extended manually on the terrestrial side so the complete assessment area is within a specific country.
 
 ```{r}
 # TODO: update available: EMODnet_HA_OtherManagementAreas_EEZ_v11_20210506
 # <https://www.emodnet-humanactivities.eu/search-results.php?dataname=Exclusive+Economic+Zone>
 if (! use_pre_calculated_data) {
 	cumi_message("loading and suplementing country information ...")
-	country_file <- file.path(myDir,"Biotopes/countries.shp")
+	country_file <- file.path(myDir,"Base/countries.shp")
 	countryLayer <- st_read(country_file)
 	areaCountryLayer <- st_intersection(areaLayer,countryLayer)
 }
@@ -608,7 +610,7 @@ if (! use_pre_calculated_data) {
 
 
 ## The biotope map
-The biotope map is based on the *Emodnet broad-scale seabed habitat map for Europe* (= EUSeapMap).
+The biotope map is based on the *EMODnet broad-scale seabed habitat map for Europe* (= EUSeapMap), dated September 2021.
 
 ### Biotope, country and assessment area data
 In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic data set is huge) a manually clipped version if the latter data set is used where anything roughly outside the Kattegat area has been removed.
@@ -616,11 +618,11 @@ In the first step, the original map for the Baltic Sea[^1] (dated September 2021
 ```{r}
 if (! use_pre_calculated_data) {
 	cumi_message("starting with EMODnet biotopes ...")
-	biotopeBaltic_file <- file.path("/Users/Torsten/Marilim/GIS/EUSeaMap_2021/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
+	biotopeBaltic_file <- file.path(myDir,"Biotopes/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
 	biotopeBalticLayer <- st_read(biotopeBaltic_file, layer="EUSeaMap_2021_Baltic") %>%
 		st_transform(coordSystem) %>%
 		st_make_valid() %>%
-		# onyl keep the BHT column:
+		# only keep the BHT column:
 		select(MSFD_BBHT) %>%
 		# rename geometry column so it fits to the Kattegat layer below:
 		rename_geometry("geom") %>%
@@ -630,7 +632,7 @@ if (! use_pre_calculated_data) {
 	# 2. buffering by 0 metres (thus repairing geomerty errors)
 	# 3. manually dividing objects around the Kattegat boundary
 	# 4. deleting all objects outside the Kattegat
-	biotopeKattegat_file <- file.path("/Users/Torsten/Marilim/GIS/EUSeaMap_2021/EUSeaMap 2021 Arctic_Atlantic GDB/EUSeaMap_2021_Kattegat-v2.gpkg")
+	biotopeKattegat_file <- file.path(myDir,"Biotopes/EUSeaMap_2021_Kattegat-v2.gpkg")
 	biotopeKattegatLayer <- st_read(biotopeKattegat_file, layer="EUSeaMap_2021_Kattegat") %>%
 		st_transform(coordSystem) %>%
 		st_cast("MULTIPOLYGON") %>%
@@ -665,7 +667,7 @@ Some taxa inhabiting specific areas lead to a 'high' sensitivity towards the pre
 if (! use_pre_calculated_data) {
 	cumi_message("including information on sensitive species ...")
 
-	species_folder <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS II/Benthic species")
+	species_folder <- file.path(myDir,"Biotopes/Benthic species")
 
 	# this new column will hold all the species information later:
 	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
@@ -695,7 +697,7 @@ if (! use_pre_calculated_data) {
 		)
 		# for Zostera, ignore any vegetation below 10m depth:
 		if (myShort == "Zoste") {
-			depths <- rast("/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/Daten/HELCOM-Daten/Depthreliefmap/depth/w001001.adf")
+			depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
 			tmp <- terra::extract(depths,mydata_poly, 'mean')
 			sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
 		} else  {
@@ -1288,7 +1290,7 @@ if (! use_pre_calculated_data) {
 }
 ```
 
-The pressure data used here were provided by HELCOM as a result of a data call to the contracting parties:
+The pressure data used here were provided by HELCOM as a result of a data call to the contracting parties. The following list is the description that followed the data package sent out to CumI lead by 2022-07-01:
 
 Cables
 : HOLAS 3 data for DK, FI and PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE and SE (flaged in the Notes). Complementation with HOLAS 2 data for RU, LV, LT (flaged in the Notes). Data still pending from CPs.
@@ -1357,7 +1359,8 @@ The confidence is rated as 'd3t3s1' for all countries except Russia which is rat
 ```{r}
 if (use_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
-	fishing_file_pre <- file.path(myDir,"Fishery/fishery_pre_calculated.shp")
+
+	fishing_file_pre <- file.path(myDir,"Fishery/fishery_pre_calculated.gpkg")
 	if (! file.exists(fishing_file_pre)) {
 		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
 	} else {
@@ -1365,6 +1368,8 @@ if (use_pre_calculated_data) {
 	}
 } else {
 	cumi_message("... calculating fishery impact - this will take a lot of time, so see you tomorrow ...")
+	# the following file `file.path(myDir,"Fishery/fishery_surface.shp")` contains
+	# the raw data before aggregation as compiled from the individual ICES data files
 	fishing_file <- file.path(myDir,"Fishery/fishery_surface.shp")
 	fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
 	
@@ -1451,7 +1456,7 @@ The confidence is rated 'd2t3s1':
 
 ```{r}
 cumi_message("... finfish ...")
-mari_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/finfish mariculture/Finfish_PLC/Finfish_PLC.shp")
+mari_1_file <- file.path(myDir,"Mariculture/Finfish_PLC/Finfish_PLC.shp")
 mari_1 <- st_read(mari_1_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
@@ -1475,7 +1480,7 @@ The confidence is rated 'd2t0s1' for Denmark and 'd0t0s0' for Germany:
 
 ```{r}
 cumi_message("... shellfish (points) ...")
-mari_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shellfish mariculture/Aquaculture_Shellfish_EMODnets/Aquaculture_Shellfish_EMODnets.shp")
+mari_2_file <- file.path(myDir,"Mariculture/Aquaculture_Shellfish_EMODnets/Aquaculture_Shellfish_EMODnets.shp")
 mari_2 <- st_read(mari_2_file)
 
 # In this case, MOP is the same as intensity as frequency is not applicable:
@@ -1518,7 +1523,7 @@ The confidence is rated 'd1t1s1' for Estonia, Finland and Germany and 'd0t0s0' f
 
 ```{r}
 cumi_message("... extraction of sand and gravel ...")
-extraction_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/extraction of sand and gravel/Extraction_of_sand_and_gravel/ExtractonSandGravel.shp")
+extraction_file <- file.path(myDir,"Extraction_Disposal/Extraction_of_sand_and_gravel/ExtractonSandGravel.shp")
 extraction_x <- st_read(extraction_file) %>% st_zm()
 
 # filter out all sites which had an amount of 0 in all years:
@@ -1558,16 +1563,16 @@ The confidence is rated 'd1t3s1':
 
 ```{r}
 cumi_message("... deposit of dredged material (areas) ...")
-deposit_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_areas_dissolved.shp")
+deposit_1_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_areas_dissolved.shp")
 deposit_1 <- st_read(deposit_1_file)
 
 # we remove the German data here to take the ones from the correction data instead:
 deposit_1 <- deposit_1 %>% filter(! str_detect(Helcom_sit,"^DE/"))
-deposit_1_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_areas_DE.shp")
+deposit_1_de_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_areas_DE.shp")
 deposit_1_de <- st_read(deposit_1_de_file) %>% select(geometry)
 
 # the correction from Sweden seems to be an update for most site, but there are two new sites which we include:
-deposit_1_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/SE Helcom/HELCOM_Deposit_polygon.shp")
+deposit_1_se_file <- file.path(myDir,"Extraction_Disposal/depositing/HELCOM_Deposit_polygon_SE.shp")
 deposit_1_se <- st_read(deposit_1_se_file) %>%
 	st_transform(coordSystem) %>%
 	st_zm() %>%
@@ -1602,11 +1607,11 @@ The confidence is rated 'd1t3s1':
 
 ```{r}
 cumi_message("... deposit of dredged material (points) ...")
-deposit_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_points.shp")
+deposit_2_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_points.shp")
 deposit_2 <- st_read(deposit_2_file)
 
 # corrections from DE:
-deposit_2_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_points_DE.shp")
+deposit_2_de_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_points_DE.shp")
 deposit_2_de <- st_read(deposit_2_de_file)
 # remove all entries from main data that have DE corrections:
 de_corr <- deposit_2_de$Helcom_sit
@@ -1615,7 +1620,7 @@ deposit_2 <- deposit_2 %>% filter(! Helcom_sit %in% de_corr)
 deposit_2_de <- select(deposit_2_de,geometry)
 
 # the same game for SE data corrections:
-deposit_2_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/SE Helcom/HELCOM_Deposit_point.shp")
+deposit_2_se_file <- file.path(myDir,"Extraction_Disposal/depositing/HELCOM_Deposit_point_SE.shp")
 deposit_2_se <- st_read(deposit_2_se_file) %>% st_transform(coordSystem)
 # remove all entries from main data that have SE corrections:
 se_corr <- deposit_2_se$Deposit_id
@@ -1643,7 +1648,7 @@ The confidence is rated 'd1t0s1':
 
 
 ```{r}
-deposit_3_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/depositing of dredged material/depositing/depositing_lines.shp")
+deposit_3_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_lines.shp")
 deposit_3 <- st_read(deposit_3_file)
 # one of the German entries here seems having a truncated ID as the same site appears in the DE update with a full ID.
 # We change it here
@@ -1651,7 +1656,7 @@ deposit_3$Helcom_sit[deposit_3$Helcom_sit == "14"] <- "DE/14"
 deposit_3$Dredging_I[deposit_3$Helcom_sit == "DE/14"] <- "DE/14-2016-1"
 
 # it seems the German update replaces the complete German set:
-deposit_3_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_depositing_of_dredged_material/depositing_lines_DE.shp")
+deposit_3_de_file <- file.path(myDir,"Extraction_Disposal/depositing/depositing_lines_DE.shp")
 deposit_3_de <- st_read(deposit_3_de_file) %>% select(geometry)
 deposit_3 <- filter(deposit_3,! str_detect(Helcom_sit,"^DE/")) %>% select(geometry)
 
@@ -1676,17 +1681,17 @@ The confidence is rated 'd1t0s1':
 
 ```{r}
 cumi_message("... maintenance dredging (areas) ...")
-dredge_a_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/dredging/dredging_mainteinance/dredgingmantainance_poly.shp")
+dredge_a_file <- file.path(myDir,"Dredging/dredgingmantainance_poly.shp")
 dredge_1 <- st_read(dredge_a_file) %>% st_zm() %>% select(geometry)
 
 # the original HOLAS III file does not contain any SE data:
 # SE data (the only valid file is the one from 2022-07-01, the one from the day before did not contain everything):
-dredge_1_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Dredging/polygonCopy.shp")
+dredge_1_se_file <- file.path(myDir,"2/Dredging/polygonCopy_SE.shp")
 dredge_1_se <- st_read(dredge_1_se_file) %>% select(geometry)
 
 # corrected DE data (comparing the initial HOLAS III and the update, these are different sites and years
 # and both are kept):
-dredge_1_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_areas_DE.shp")
+dredge_1_de_file <- file.path(myDir,"Dredging/dredging_areas_DE.shp")
 dredge_1_de <- st_read(dredge_1_de_file) %>% st_make_valid() 
 # one site is marked "capital", so we save that ine as capital dredging:
 dredge_2 <- filter(dredge_1_de,Dredging_a == "capital")
@@ -1721,15 +1726,15 @@ The confidence is rated 'd1t0s1':
 
 ```{r}
 cumi_message("... maintenence dredging (points) ...")
-dredge_p_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/dredging/dredging_mainteinance/dredgingmantainance_point.shp")
+dredge_p_file <- file.path(myDir,"Dredging/dredgingmantainance_point.shp")
 dredge_3 <- st_read(dredge_p_file) %>% st_zm() %>% select(geometry)
 
 # SE data:
-dredge_p_se_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Dredging/point.shp")
+dredge_p_se_file <- file.path(myDir,"Dredging/point_SE.shp")
 dredge_p_se <- st_read(dredge_p_se_file) %>% select(geometry)
 
 # DE data:
-dredge_p_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_points_DE.shp")
+dredge_p_de_file <- file.path(myDir,"Dredging/dredging_points_DE.shp")
 dredge_p_de <- st_read(dredge_p_de_file) %>% select(geometry)
 
 dredge_3 <- rbind(dredge_3,dredge_p_se,dredge_p_de)
@@ -1750,7 +1755,7 @@ The confidence is rated 'd1t0s1':
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
 ```{r}
-dredge_l_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_correction_DE/Corrected_dredging_36_2/dredging_lines_DE.shp")
+dredge_l_file <- file.path(myDir,"Dredging/dredging_lines_DE.shp")
 
 dredge_l <- st_read(dredge_l_file)
 
@@ -1780,14 +1785,14 @@ The confidence is rated 'd1t0s1':
 
 ```{r}
 cumi_message("... pipelines ...")
-pipeline_file1 <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/pipelines/PIPELINE/Pipelines_polygons.shp")
+pipeline_file1 <- file.path(myDir,"Pipelines_Cables/Pipelines_polygons.shp")
 
 # piplines under construction:
 pipeline_c <- st_read(pipeline_file1) %>% st_zm() %>%
 	filter(Status == "under construction") %>%
 	select(geometry)
 
-pipeline_file1 <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/pipelines/PIPELINE/PIPELINE_append.shp")
+pipeline_file1 <- file.path(myDir,"Pipelines_Cables/PIPELINE_append.shp")
 
 # pipelines in operation:
 # ignore "planned", treat NULL as operational:
@@ -1820,14 +1825,14 @@ cumi_message("... cables in operation ...")
 # the file CABLES_polygones.shp does only have cables in planning or where application is submitted.
 # Thus, there is no cable yet and the data can be ignored.
 # The "append" file only has various forms of cable in operation and none under construction:
-cable_o_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/cables/CABLES/CABLES_append.shp")
+cable_o_file <- file.path(myDir,"Pipelines_Cables/CABLES_append.shp")
 cable_o <- st_read(cable_o_file) %>%
 	filter(Status %in% c('Operational', 'operational','completed','Out of use','Unknown')) %>%
 	select(geometry) %>%
 	st_cast("LINESTRING")
 
 # all assumed to be after construction, i.e. in operation (Status = '4', '11', 'in Probebetrieb'):
-cable_o2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_DE_HA/CABLES.shp")
+cable_o2_file <- file.path(myDir,"Pipelines_Cables/CABLES_DE.shp")
 cable_o2 <- st_read(cable_o2_file) %>%
 	st_zm() %>%
 	select(geometry) %>%
@@ -1840,21 +1845,21 @@ cable_o <- rbind(cable_o, cable_o2)
 ## and missing function arguments in some intermediate step.
 ### Alternative is to dissect cumi_process_pressure into manual steps:
 ### - intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
-intensity_layer <- cumi_buffer_intensity(cable_o,"cable O")
-st_write(intensity_layer,file.path(myDir,"Results/tmp1.shp"))
-st_write(impact_map,file.path(myDir,"Results/tmp2.shp"))
+#intensity_layer <- cumi_buffer_intensity(cable_o,"cable O")
+#st_write(intensity_layer,file.path(myDir,"Results/tmp1.shp"))
+#st_write(impact_map,file.path(myDir,"Results/tmp2.shp"))
 ### - union intensity_layer with impact_map in ArcGIS
-readline(prompt="Make sure you have the ArcGIS union result ready as 'impact_map' here: ")
+#readline(prompt="Make sure you have the ArcGIS union result ready as 'impact_map' here: ")
 ### - apply impact in R
 # (the last line st_cast will also remove some nasty LINESTRING and MULTILINESTRING)
-impact_map <- impact_map %>%
-	dplyr::mutate(impact_4C := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
-	dplyr::select(-intensity) %>%
-	filter(! is.na(Biotope)) %>%
-	st_make_valid() %>%
-	st_cast("MULTIPOLYGON")
+#impact_map <- impact_map %>%
+#	dplyr::mutate(impact_4C := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
+#	dplyr::select(-intensity) %>%
+#	filter(! is.na(Biotope)) %>%
+#	st_make_valid() %>%
+#	st_cast("MULTIPOLYGON")
 
-#impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
+impact_map <- cumi_process_pressure(cable_o,"cable O","4C")
 
 # confidence:
 impact_map <- impact_map %>% mutate(confidence_4C = "d1t0s1")
@@ -1881,12 +1886,12 @@ The confidence is rated 'd1t0s1':
 ```{r}
 cumi_message("... wind farms in operation ...")
 # the file only seems to contains turbines, at least there is no information on transformer platforms included:
-wind_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/wind farms/Wind farms_operational/WINDTURBINES_append.shp")
+wind_file <- file.path(myDir,"Wind_turbines/WINDTURBINES_append.shp")
 wind_x <- st_read(wind_file) %>% select(geometry)
 
 # German data (reading this file will result in warnings on the content of the field
 # Pcapacity which we can ignore):
-wind_de_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/HOLAS3_DE_HA/WIND TURBINES.shp")
+wind_de_file <- file.path(myDir,"Wind_turbines/WIND TURBINES_DE.shp")
 wind_de <- st_read(wind_de_file)
 
 wind_x2 <- filter(wind_de,! Foundation == "monopile") %>% select(geometry)
@@ -1926,23 +1931,23 @@ The confidence is rated 'd1t0s1':
 
 ```{r}
 # main polygon data, all treated as operational:
-def_1_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefense_polygons.shp")
+def_1_file <- file.path(myDir,"Coastal_defense/CoastalDefense_polygons.shp")
 def_1 <- st_read(def_1_file) %>% st_zm() %>% st_make_valid() %>% select(geometry)
 
 # SE polygon data, treated as operational:
-def_2_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Coastal defence/coastal_defence_3035.shp")
+def_2_file <- file.path(myDir,"Coastal_defense/coastal_defence_3035_SE.shp")
 def_2 <- st_read(def_2_file) %>% st_zm() %>% select(geometry)
 
 # main point data, all treated as operational:
-def_3_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefense_points.shp")
+def_3_file <- file.path(myDir,"Coastal_defense/CoastalDefense_points.shp")
 def_3 <- st_read(def_3_file) %>% select(geometry)
 
 # SE point data, no information on status, treated as operational:
-def_4_file <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-05/Coastal defence/coastal_defence_point_3035.shp")
+def_4_file <- file.path(myDir,"Coastal_defense/coastal_defence_point_3035_SE.shp")
 def_4 <- st_read(def_4_file) %>% st_transform(coordSystem) %>% select(geometry)
 
 # line data:
-def_5_file <- file.path(myDir, "../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/coastal defence and flood protection/CoastalDefence_lines/CoastalDefence_lines_APPEND.shp")
+def_5_file <- file.path(myDir, "Coastal_defense/CoastalDefence_lines_APPEND.shp")
 def_5 <- st_read(def_5_file)
 def_5_o1 <- filter(def_5, Status %in% c('reconstruction', 'new building', 'operational', 'executed', 'Gældende'))
 def_5_o2 <- filter(def_5, is.na(Status))
@@ -1994,7 +1999,7 @@ The confidence is rated 'd3t3s1':
 ```{r}
 cumi_message("processing shipping ...")
 
-ship_folder <- file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shipping/All ship types")
+ship_folder <- file.path(myDir,"Shipping")
 
 # note: I had to rename the file with the 2020 data since the filename was missing an 's'
 # compared to the files for the other years:
@@ -2015,7 +2020,7 @@ ship_vect <- filter(ship_vect, mean > 0) %>%
 	rename(density = mean)
 
 # add in the average depth per polygon:
-depths <- rast(file.path(myDir,"../../Daten/HELCOM-Daten/HOLAS III/Data from 2022-07-01/shipping/depth rasters/depth_1x1km.tif"))
+depths <- rast(file.path(myDir,"Base/detph rasters/depth_1x1km.tif"))
 tmp <- terra::extract(depths,ship_vect, 'mean')
 ship_vect <- cbind(ship_vect,tmp) %>% st_as_sf() %>% rename(depth = depth_1x1km)
 
