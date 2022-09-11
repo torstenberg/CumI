@@ -2074,7 +2074,7 @@ ship_vect <- mutate(ship_vect, MOP = case_when(
 # dissolve the polygons by MOP only to reduce file size and risk of artifacts.
 ship_vect <- ship_vect %>% group_by(MOP) %>% summarize() %>% st_cast("MULTIPOLYGON")
 
-# the union in the following statement took roughly 20 hours on my machine using the QGIS function, on ArGIS the union fails with an unspecific error:
+# the union in the following statement took roughly 30 hours on my machine using the QGIS function, on ArcGIS the union fails with an unspecific error:
 impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
 	my_union(ship_vect) %>% 
 	dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
@@ -2097,7 +2097,7 @@ Now, all individual impacts are calculated and integrated into the biotope map. 
 
 ```{r}
 #
-# the following code is explicit and thus slow (approx. 1 hour on my machine), will be speed-optimized later
+# the following code is explicit and thus slow (approx. 40 minutes on my machine), will be speed-optimized later
 #
 # make list of all impact columns to loop over:
 impactColumns <- grep("impact_[1-9].?",names(impact_map),value=TRUE)
@@ -2139,8 +2139,8 @@ cumi_message("Finished assesment!")
 print(n2)
 print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
-st_write(impact_map_disturbance,paste("Data/Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".shp",sep= ""))
-st_write(impact_map_loss,paste("Data/Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".shp",sep= ""))
+st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 ```
 
 The resulting CumI-assessment file has a number of columns now. This is what they mean:
@@ -2155,6 +2155,7 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 - Sal = bottom salinity class (from HELCOM BALANCE project)
 - Sal2 = bottom salinity value range (from HELCOM BALANCE project)
 - impact_xx = CumI impact category for the component specified by 'xx':
+- confidence_xx = CumI confidence rating for the component specified by xx':
 	- 1: Bottom trawling fishery (surface abrasion), raster data
 	- 2A: Finfish mariculture, point data
 	- 2B: Shellfish mariculture, point data
@@ -2185,6 +2186,8 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 - no differentiation of fishing pressure according to gear type
 - available frequency information not yet used (see next section)
 - wind turbine fundament information currently not utilized
+- the status of data from Russia is not clear
+
 - change: the footprint of pipelines under construction is now being treated as 'loss'
 - change: a buffer model for monopile fundaments for wind turbines is used which is identical to the original model, only change is that the footprint is treated as loss
 
