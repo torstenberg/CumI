@@ -2141,6 +2141,10 @@ print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
 st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+
+# a complete file including the area of the polygons, loss and disturbance could be this:
+# impact_map <- impact_map %>% mutate(area = st_area(impact_map))
+# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 ```
 
 The resulting CumI-assessment file has a number of columns now. This is what they mean:
