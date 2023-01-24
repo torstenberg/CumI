@@ -1414,33 +1414,73 @@ if (use_pre_calculated_data) {
 	# the following file `file.path(myDir,"Fishery/fishery_surface.shp")` contains
 	# the raw data before aggregation as compiled from the individual ICES data files
 	fishing_file <- file.path(myDir,"Fishery/fishery_surface.shp")
-	cumi_message("... intersection with clipLayer ...")
 	if (do_cumi) {
+	  cumi_message("... intersection with clipLayer ...")
 	  fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
 	} else {
 	  fishing_x <- st_read(fishing_file)
 	}
 	
-	cumi_message("... calculating MOP from SAR values ...")
-	# columns for SAR values:
+	# SARmode <- "quarters"
+	SARmode <- "years"
 	fishingQuarters <- c("1","2","3","4")
-	fishingSARcolumns <- c()
-	for(myYear in assessmentYears) {
-		for(myQuarter in fishingQuarters) {
-			fishingSARcolumns <- c(fishingSARcolumns,paste("F",myYear,"_",myQuarter,sep=""))
-		}
-	}
-	# expression to calculate the average SAR:
-	sum <- paste(fishingSARcolumns,collapse='+')
-	avgSAR <- paste("(", sum, ")/",length(fishingSARcolumns))
 	makeAvg <- function(myLayer,myString) {
 		q <- quote(mutate(myLayer,sar_avg = myString))
 		eval(parse(text=sub("myString", myString, deparse(q))))
 	}
-	
-	# treat SAR values lower than 0.05 as zero intensity:
-	for (myColumn in fishingSARcolumns) {
-		fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
+	if (SARmode == "quarters") {
+		# treat each quarterly SAR value as a properly scaled value:
+		cumi_message("... calculating MOP from SAR values based ony quarterly values ...")
+		# columns for SAR values:
+		fishingSARcolumns <- c()
+		for(myYear in assessmentYears) {
+			for(myQuarter in fishingQuarters) {
+				fishingSARcolumns <- c(fishingSARcolumns,paste("F",myYear,"_",myQuarter,sep=""))
+			}
+		}
+		# expression to calculate the average SAR:
+		sum <- paste(fishingSARcolumns,collapse='+')
+		avgSAR <- paste("(", sum, ")/",length(fishingSARcolumns))
+		# treat quarterly SAR values lower than 0.05 as zero intensity:
+		for (myColumn in fishingSARcolumns) {
+			fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
+		}
+	}
+	if (SARmode == "yearly") {
+		# treat the quarterly SAR values as not scaled properly, so we need to add the quarterly values per year
+		# and the go on with calculating on the yearly values
+		# if they exceed or are equal to 0.05:
+		cumi_message("... calculating MOP from SAR values based ony yearly values recalculated from quarterly values ...")
+	  makeSum <- function(myLayer,myString,myYear) {
+		  #q <- quote(mutate(myLayer,paste("sar_",myYear," = ",myString,sep="")))
+		  #eval(parse(text=print(myString)))
+	    var <- paste0("sar_",myYear)
+	    mutate(myLayer, !!sym(var) := eval(parse(text="print(myString)")))
+		}
+	  fishingYearSARcolumns <- c()
+	  for(myYear in assessmentYears) {
+			fishingYearSARcolumns <- c(fishingYearSARcolumns,paste("sar_",myYear,sep=""))
+	    fishingQuarterlySARcolumns <- c()
+		  for(myQuarter in fishingQuarters) {
+				fishingQuarterlySARcolumns <- c(fishingQuarterlySARcolumns,paste("F",myYear,"_",myQuarter,sep=""))
+		  }
+			yearlySum <- paste(fishingQuarterlySARcolumns,collapse='+')
+			## doesn't work ... ####fishing_x <- makeSum(fishing_x,yearlySum,myYear)
+	  }
+	  # ok, then let's hardcode this then ...
+	  fishing_x <- mutate(fishing_x,sar_2016 = F2016_1+F2016_2+F2016_3+F2016_4)
+	  fishing_x <- mutate(fishing_x,sar_2017 = F2017_1+F2017_2+F2017_3+F2017_4)
+    fishing_x <- mutate(fishing_x,sar_2018 = F2018_1+F2018_2+F2018_3+F2018_4)
+	  fishing_x <- mutate(fishing_x,sar_2019 = F2019_1+F2019_2+F2019_3+F2019_4)
+	  fishing_x <- mutate(fishing_x,sar_2020 = F2020_1+F2020_2+F2020_3+F2020_4)
+	  fishing_x <- mutate(fishing_x,sar_2021 = F2021_1+F2021_2+F2021_3+F2021_4)
+	  # treat yearly SAR values lower than 0.05 as zero intensity:
+		for (myColumn in fishingYearSARcolumns) {
+			fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
+		}
+	  # expression for the calculation of average SAR and conversion to MOP:
+	  sum <- paste(fishingYearSARcolumns,collapse='+')
+	  avgSAR <- paste("(", sum, ")/",length(fishingYearSARcolumns))
 	}
 	
 	# convert SAR into MOP:
