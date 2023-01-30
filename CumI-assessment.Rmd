@@ -1964,7 +1964,7 @@ wind_x <- st_read(wind_file)
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(wind_x,! Foundation == "monopile"),"OWF O","5A")
+	impact_map <- cumi_process_pressure(filter(wind_x,! Foundation == "monopile" | is.na(Foundation)),"OWF O","5A")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_5A = "d1t0s1")
