@@ -1,9 +1,9 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2023-01-26
+date: 2023-01-30
 output: html_document
-editor_options: 
+editor_options:
   chunk_output_type: console
 ---
 
@@ -292,7 +292,7 @@ cumi_impact_matrix <- tribble(
 	"very low",	"m1",		"low",			"very low", "very low"
 )
 
-	  
+
 cumi_get_impact <- function(MOP,sensi) {
 	#
 	# function returning the impact given the MOP
@@ -395,8 +395,40 @@ cumi_buffers <- tribble(
 	"mariculture",  "mariculture",               150,				150,			  400,				  650,			 1150,					 1,
 	"harbour O",	"harbour",                   200,				  0,			    0,				    0,			    0,					 0
 )
+
 ```
 
+```{r}
+# fishing: wie bei HELCOM, abweichend von alter Fallstudie (Kumulation von surface+subsurface)
+#
+
+cumi_buffers_de <- tribble(
+   ~pressure,		~description,                    ~buffer_loss, ~buffer_high,  ~buffer_moderate, ~buffer_low,	~buffer_verylow,  ~footprint_as_loss,
+	#--------------|--------------------------------|-------------|-------------|-----------------|--------------|------------------|------------------
+	"extraction",	"sand and gravel extraction",      0,				 50,			  100,				  250,			  500,					 1,
+	"depositing",	"deposit of dredged material",     0,				 50,			  100,				  250,			  500,					 0,
+	"dredging M",	"maintenance dredging",            0,				 50,			  100,				  250,			  500,					 0,
+	"dredging CAP", "capital  areas",                 0,				  0,			    0,				    0,			    0,					 1,
+	"dredging CAP1","captial  points  <= 5000m3",     25,				 25,			   25,				   25,			   25,					 1,
+	"dredging CAP2","capital  points  > 5000m3",     50,				 50,			   50,				   50,			   50,					 1,
+	"*cable Cs",	"cable <= 20m depth",              0,				  0.5,		    3,				   10,			  100,					 0,
+	"*cable Cd",	"cable > 20m depth",               0,				  0.5,		    3,				   10,			   50,					 0,
+	"*cable O",		"cable",                           0,				  0,			    0,			       0,		       0,					 0,
+	"*pipeline CT",	"pipelines trenched",           0,				 25,			   50,				  100,			  150,					 0, # very low 150 oder 200m? unklar
+	"*pipeline Cd","pipeline on surface > 20m depth", 0,				  0,			    5,				   10,			   50,					 0, # same as OWF; also for unknown construction method
+	"*pipeline Cs","pipeline on surface <= 20m depth",0,				  0,			   10,				   20,			  100,					 0, # same as OWF; also for unknown construction method
+	"*pipeline Os", "pipelines surface/unknown",      1,				  0,			    0,				    0,			    0,					 1,
+	"*pipeline OT", "pipelines trenched",             0,				  0,			    0,				    0,			    0,					 0,
+	"*OWF Cd",		"offshore wind farms > 20m depth", 0,				  0,			    5,				   10,			   50,					 0, # also for platforms
+	"*OWF Cs",		"offshore wind farms <= 20m depth",0,				  0,			   10,				   20,			  100,					 0, # also for platforms
+	"*OWF O",		"offshore wind farms",            10,				  0,			    0,			       0,			    0,					 1, # loss-Puffer um jede Turbine
+	"coastalDef C", "coastal defence",                0,				 50,			  100,				  250,			  500,					 0,
+	"coastalDef O", "coastal defense",               50,				 50,			   50,				   50,			   50,					 1,
+	"*mariculture",  "mariculture",                   0,				  0,			    0,				  125,			  500,					 0,
+	"harbour O",	"harbour",                       200,				  0,			    0,				    0,			    0,					 1
+
+)
+```
 
 The following function uses the above buffer models to calculate the concrete spatial extent of the various intensity zones for a given pressure:
 
@@ -410,14 +442,14 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	# pressureBufferModel - the symbolic name of the buffer model in the tribble 'cumi_buffer'
 	# (column ~pressure)
 	#
-	
+
 	footprint <- filter(cumi_buffers,pressure==pressureBufferModel)[["footprint_as_loss"]]
 	loss <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_loss"]]
 	vl	<- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_verylow"]]
 	l	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_low"]]
 	m	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
 	h	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
-	
+
 	# 'very low' zone:
 	if (vl-l > 0) {
 		b_verylow <- st_buffer(pressureData,vl)
@@ -426,7 +458,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  st_cast("POLYGON") %>% mutate(intensity="very low") %>% rename_geometry("geometry")
 		output <- zone_verylow
 	}
-	
+
 	# 'low' zone:
 	if (l-m > 0) {
 		if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
@@ -439,7 +471,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  output <- zone_low
 		}
 	}
-	
+
 	# 'moderate' zone:
 	if (m-h > 0) {
 		if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
@@ -452,7 +484,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  output <- zone_moderate
 		}
 	}
-	
+
 	# 'high' zone:
 	if (h-loss > 0) {
 		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
@@ -465,7 +497,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  output <- zone_high
 		}
 	}
-	
+
 	# 'loss' zone:
 	if (loss > 0) {
 		if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
@@ -476,7 +508,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  output <- zone_loss
 		}
 	}
-	
+
 	# footprint zone as 'loss':
 	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
 		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
@@ -487,7 +519,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		  output <- zone_footprint
 		}
 	}
-	
+
 	return(output)
 }
 ```
@@ -530,9 +562,9 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	if (do_cumi) {
 		column <- paste("impact_",suffix,sep="")
 		cumi_message("... unioning ...")
-		result <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-			my_union(intensity_layer) %>% 
-			dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
+		result <- st_cast(impact_map,"MULTIPOLYGON") %>%
+			my_union(intensity_layer) %>%
+			dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>%
 			dplyr::select(-intensity) %>% filter(! is.na(Biotope))
 		cumi_message("Done!")
 		return(result)
@@ -607,7 +639,7 @@ store_pressure_maps <- TRUE
 Normally, you want the CumI assessment to be done. But if you only want the pressure maps and not the actual CumI calculations (which will be much quicker in terms of processing time), i.e. not the overlay with biotoptes and sensitivity and the cumulation, then you can turn it off here:
 
 ```{r}
-do_cumi <- FALSE
+do_cumi <- TRUE
 ```
 
 The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
@@ -768,7 +800,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
 	names(salinityLayer)[1] <- "category"
 	salinityLayer <- st_as_sf(salinityLayer) %>% mutate(Sal = 'none') %>% mutate(Sal2 = 'none')
-	
+
 	for (i in 1:nrow(salinityLayer)) {
 		cat <- salinityLayer$category[i]
 		salinityLayer$Sal[i] <- case_when(
@@ -788,9 +820,9 @@ if (! use_pre_calculated_data && do_cumi) {
 			cat == "6" ~ "> 30"
 		)
 	}
-	
+
 	salinityLayer <- select(salinityLayer,-category)
-	
+
 	# (this following is done with ArcGIS ... otherwise it takes too long:)
 	areaCountryBiotopeSalinityLayer <- my_union(areaCountryBiotopeLayer,salinityLayer)
 	# Now some cleaning:
@@ -815,17 +847,17 @@ In the following step, the sensitivities will be assigned based on the biotope, 
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("assign sensitivities ...")
 	tmp <- areaCountryBiotopeSalinityLayer
-	
+
 	# new columns 'sens' and 's_surf':
 	tmp <- tmp %>% mutate(sens = 'none') %>% mutate(s_surf = 'none')
-	
+
 	# template for selection of value based on largest area (data from 'CumI-assessment-2021-08-23T2157.gpkg'):
 	# select sum(area) as area, '"' || Territory || '", "' || Biotope || '", "' || Sal2 || '", "' || s_surf || '",'
 	# as line from cumi
 	# group by Biotope,s_surf,Sal2
 	# order by Territory,biotope,Sal2
 	#
-	
+
 	cumi_Sensitivities <- tribble(
 		~Territory, ~Biotope,    ~Sal2,   ~sens,         ~s_surf,
 		# --------------------------------------------------------
@@ -833,37 +865,37 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Denmark", "circa hard", "11-18",  "high",        "high",
 		"Denmark", "circa hard", "18-30",  "high",        "high",
 		"Denmark", "circa hard", "> 30",   "high",        "high", # both values assumed
-		
+
 		"Denmark", "circa mix", "7.5-11",  "high",        "low",
 		"Denmark", "circa mix", "11-18",   "high",        "low",
 		"Denmark", "circa mix", "18-30",   "high",        "low",
 		"Denmark", "circa mix", "> 30",    "high",        "low",
-		
+
 		"Denmark", "circa mud", "7.5-11",  "moderate",    "moderate",
 		"Denmark", "circa mud", "11-18",   "moderate",    "moderate",
 		"Denmark", "circa mud", "18-30",   "moderate",    "high",
 		"Denmark", "circa mud", "> 30",    "moderate",    "high",
-		
+
 		"Denmark", "circa sand", "7.5-11", "low",         "moderate",
 		"Denmark", "circa sand", "11-18",  "low",         "moderate",
 		"Denmark", "circa sand", "18-30",  "low",         "high",
 		"Denmark", "circa sand", "> 30",   "low",          "high",
-		
+
 		"Denmark", "infra hard", "7.5-11", "high",        "high",
 		"Denmark", "infra hard", "11-18",  "high",        "high",
 		"Denmark", "infra hard", "18-30",  "high",        "high",
 		"Denmark", "infra hard", "> 30",   "high",         "high",
-		
+
 		"Denmark", "infra mix", "7.5-11", "high",         "low",
 		"Denmark", "infra mix", "11-18",  "high",         "low",
 		"Denmark", "infra mix", "18-30",  "high",         "high",
 		"Denmark", "infra mix", "> 30",   "high",         "high",
-		
+
 		"Denmark", "infra mud", "7.5-11", "moderate",     "moderate",
 		"Denmark", "infra mud", "11-18",  "moderate",     "moderate",
 		"Denmark", "infra mud", "18-30",  "moderate",     "high",
 		"Denmark", "infra mud", "> 30",   "moderate",     "high",
-		
+
 		"Denmark", "infra sand", "7.5-11", "low",         "moderate",
 		"Denmark", "infra sand", "11-18",  "low",         "moderate", # s_surf assumed
 		"Denmark", "infra sand", "18-30",  "low",         "high",
@@ -871,56 +903,56 @@ if (! use_pre_calculated_data && do_cumi) {
 		# --------------------------------------------------------
 		"Estonia", "circa hard", "5-7.5",  "high",        "high",
 		"Estonia", "circa hard", "7.5-11", "high",        "high",
-		
+
 		"Estonia", "circa mix", "5-7.5",  "moderate",     "high",
 		"Estonia", "circa mix", "7.5-11", "moderate",     "low",
-		
+
 		"Estonia", "circa mud", "5-7.5",  "moderate",     "moderate",
 		"Estonia", "circa mud", "7.5-11", "moderate",     "moderate",
-		
+
 		"Estonia", "circa sand", "5-7.5",  "moderate",    "moderate",
 		"Estonia", "circa sand", "7.5-11", "moderate",    "moderate",
-		
+
 		"Estonia", "infra hard", "5-7.5",  "high",        "high",
 		"Estonia", "infra hard", "7.5-11", "high",        "high",
-		
+
 		"Estonia", "infra mix", "5-7.5",  "moderate",     "moderate", # s_surf assumed
 		"Estonia", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
-		
+
 		"Estonia", "infra mud", "5-7.5",  "moderate",     "moderate",
 		"Estonia", "infra mud", "7.5-11", "moderate",     "moderate",
-		
+
 		"Estonia", "infra sand", "5-7.5",  "moderate",    "moderate",
 		"Estonia", "infra sand", "7.5-11", "moderate",    "moderate",
 		# --------------------------------------------------------
 		"Finland", "circa hard", "< 5",    "high",        "high",
 		"Finland", "circa hard", "5-7.5",  "high",        "high",
 		"Finland", "circa hard", "7.5-11", "high",        "high", # s_surf assumed
-		
+
 		"Finland", "circa mix", "< 5",    "moderate",     "moderate",
 		"Finland", "circa mix", "5-7.5",  "moderate",     "moderate",
 		"Finland", "circa mix", "7.5-11", "moderate",     "moderate",
-		
+
 		"Finland", "circa mud", "< 5",    "moderate",     "moderate",
 		"Finland", "circa mud", "5-7.5",  "moderate",     "moderate",
 		"Finland", "circa mud", "7.5-11", "moderate",     "moderate",
-		
+
 		"Finland", "circa sand", "< 5",    "moderate",    "moderate",
 		"Finland", "circa sand", "5-7.5",  "moderate",    "moderate",
 		"Finland", "circa sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
-		
+
 		"Finland", "infra hard", "< 5",    "high",        "high",
 		"Finland", "infra hard", "5-7.5",  "high",        "high",
 		"Finland", "infra hard", "7.5-11", "high",        "high", # s_surf assumed
-	
+
 		"Finland", "infra mix", "< 5",    "moderate",     "moderate",
 		"Finland", "infra mix", "5-7.5",  "moderate",     "moderate",
 		"Finland", "infra mix", "7.5-11", "moderate",     "moderate", # s_surf assumed
-		
+
 		"Finland", "infra mud", "< 5",    "moderate",     "moderate",
 		"Finland", "infra mud", "5-7.5",  "moderate",     "moderate",
 		"Finland", "infra mud", "7.5-11", "moderate",     "moderate",
-		
+
 		"Finland", "infra sand", "< 5",    "moderate",    "moderate",
 		"Finland", "infra sand", "5-7.5",  "moderate",    "moderate",
 		"Finland", "infra sand", "7.5-11", "moderate",    "moderate", # s_surf assumed
@@ -929,37 +961,37 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Germany", "circa hard", "7.5-11", "high",        "high",
 		"Germany", "circa hard", "11-18",  "high",        "high",
 		"Germany", "circa hard", "18-30",  "high",        "high",
-		
+
 		"Germany", "circa mix", "5-7.5",  "moderate",     "low", # s_surf assumed
 		"Germany", "circa mix", "7.5-11", "moderate",     "low",
 		"Germany", "circa mix", "11-18",  "moderate",     "high",
 		"Germany", "circa mix", "18-30",  "moderate",     "high",
-		
+
 		"Germany", "circa mud", "5-7.5",  "moderate",     "moderate", # s_surf assumed
 		"Germany", "circa mud", "7.5-11", "moderate",     "moderate",
 		"Germany", "circa mud", "11-18",  "moderate",     "high",
 		"Germany", "circa mud", "18-30",  "moderate",     "high",
-		
+
 		"Germany", "circa sand", "5-7.5",  "moderate",    "moderate",
 		"Germany", "circa sand", "7.5-11", "moderate",    "moderate",
 		"Germany", "circa sand", "11-18",  "moderate",    "moderate",
 		"Germany", "circa sand", "18-30",  "moderate",    "moderate",
-		
+
 		"Germany", "infra hard", "5-7.5",  "high",        "high",
 		"Germany", "infra hard", "7.5-11", "high",        "high",
 		"Germany", "infra hard", "11-18",  "high",        "high",
 		"Germany", "infra hard", "18-30",  "high",        "high",
-		
+
 		"Germany", "infra mix", "5-7.5",  "moderate",     "moderate",
 		"Germany", "infra mix", "7.5-11", "moderate",     "low",
 		"Germany", "infra mix", "11-18",  "moderate",     "low",
 		"Germany", "infra mix", "18-30",  "moderate",     "high",
-		
+
 		"Germany", "infra mud", "5-7.5",  "moderate",     "moderate",
 		"Germany", "infra mud", "7.5-11", "moderate",     "moderate",
 		"Germany", "infra mud", "11-18",  "moderate",     "moderate",
 		"Germany", "infra mud", "18-30",  "moderate",     "high",
-		
+
 		"Germany", "infra sand", "5-7.5",  "moderate",    "moderate",
 		"Germany", "infra sand", "7.5-11", "moderate",    "moderate",
 		"Germany", "infra sand", "11-18",  "moderate",    "high",
@@ -969,36 +1001,36 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Latvia", "circa hard", "5-7.5",  "high",         "high",
 		"Latvia", "circa hard", "7.5-11", "high",         "high",
 		"Latvia", "circa hard", "11-18",  "high",         "high", # s_surf assumed
-		
+
 		"Latvia", "circa mix", "5-7.5",  "moderate",      "low",
 		"Latvia", "circa mix", "7.5-11", "moderate",      "low",
 		"Latvia", "circa mix", "11-18",  "moderate",      "low",
-		
+
 		"Latvia", "circa mud", "< 5",    "moderate",      "moderate",
 		"Latvia", "circa mud", "5-7.5",  "moderate",      "moderate",
 		"Latvia", "circa mud", "7.5-11", "moderate",      "moderate",
 		"Latvia", "circa mud", "11-18",  "moderate",      "moderate",
-		
+
 		"Latvia", "circa sand", "< 5",    "moderate",     "moderate",
 		"Latvia", "circa sand", "5-7.5",  "moderate",     "moderate",
 		"Latvia", "circa sand", "7.5-11", "moderate",     "moderate",
 		"Latvia", "circa sand", "11-18",  "moderate",     "moderate", # s_surf assumed
-		
+
 		"Latvia", "infra hard", "< 5",    "high",         "high",
 		"Latvia", "infra hard", "5-7.5",  "high",         "high",
 		"Latvia", "infra hard", "7.5-11", "high",         "high", # s_surf assumed
 		"Latvia", "infra hard", "11-18",  "high",         "high", # s_surf assumed
-		
+
 		"Latvia", "infra mix", "< 5",    "moderate",      "moderate", # s_surf assumed
 		"Latvia", "infra mix", "5-7.5",  "moderate",      "moderate",
 		"Latvia", "infra mix", "7.5-11", "moderate",      "moderate", # s_surf assumed
 		"Latvia", "infra mix", "11-18",  "moderate",      "moderate", # s_surf assumed
-		
+
 		"Latvia", "infra mud", "< 5",    "moderate",      "moderate",
 		"Latvia", "infra mud", "5-7.5",  "moderate",      "moderate",
 		"Latvia", "infra mud", "7.5-11", "moderate",      "moderate",
 		"Latvia", "infra mud", "11-18",  "moderate",      "moderate", # s_surf assumed
-		
+
 		"Latvia", "infra sand", "< 5",    "moderate",     "moderate",
 		"Latvia", "infra sand", "5-7.5",  "moderate",     "moderate",
 		"Latvia", "infra sand", "7.5-11", "moderate",     "moderate", # s_surf assumed
@@ -1006,49 +1038,49 @@ if (! use_pre_calculated_data && do_cumi) {
 		# --------------------------------------------------------
 		"Lithuania", "circa hard", "5-7.5",  "high",      "high",
 		"Lithuania", "circa hard", "7.5-11", "high",      "high",
-		
+
 		"Lithuania", "circa mix", "5-7.5",  "moderate",   "low",
 		"Lithuania", "circa mix", "7.5-11", "moderate",   "low",
 		"Lithuania", "circa mix", "11-18",  "moderate",   "low", # s_surf assumed
-		
+
 		"Lithuania", "circa mud", "5-7.5",  "moderate",   "moderate",
 		"Lithuania", "circa mud", "7.5-11", "moderate",   "moderate",
-		
+
 		"Lithuania", "circa sand", "< 5",    "moderate",  "moderate", # s_surf assumed
 		"Lithuania", "circa sand", "5-7.5",  "moderate",  "moderate",
 		"Lithuania", "circa sand", "7.5-11", "moderate",  "moderate",
-		
+
 		"Lithuania", "infra hard", "< 5",    "high",      "high", # both assumed (sens and s_surf)
 		"Lithuania", "infra hard", "5-7.5",  "high",      "high", # both assumed
 		"Lithuania", "infra hard", "7.5-11", "high",      "high", # both assumed
-		
+
 		"Lithuania", "infra mix", "5-7.5",  "moderate",   "moderate",
 		"Lithuania", "infra mix", "7.5-11", "moderate",   "moderate", # s_surf assumed
-		
+
 		"Lithuania", "infra mud", "5-7.5", "moderate",   "moderate",
 		"Lithuania", "infra mud", "7.5-11", "moderate",   "moderate", # s_surf assumed
-		
+
 		"Lithuania", "infra sand", "5-7.5",  "moderate",  "moderate",
 		"Lithuania", "infra sand", "7.5-11", "moderate",  "moderate", # s_surf assumed
 		# --------------------------------------------------------
 		"Poland", "circa hard", "5-7.5",  "high",         "high",
 		"Poland", "circa hard", "7.5-11", "high",         "high",
 		"Poland", "circa hard", "11-18",  "high",         "high", # s_surf assumed
-		
+
 		"Poland", "circa mix", "5-7.5",  "moderate",      "moderate", # s_surf assumed
 		"Poland", "circa mix", "7.5-11", "moderate",      "moderate",
 		"Poland", "circa mix", "11-18",  "moderate",      "moderate", # s_surf assumed
-		
+
 		"Poland", "circa mud", "< 5",    "moderate",      "moderate", # both values assumed
 		"Poland", "circa mud", "5-7.5",  "moderate",      "moderate",
 		"Poland", "circa mud", "7.5-11", "moderate",      "moderate",
 		"Poland", "circa mud", "11-18",  "moderate",      "moderate",
-		
+
 		"Poland", "circa sand", "< 5",    "moderate",     "moderate", # both values assumed
 		"Poland", "circa sand", "5-7.5",  "moderate",     "moderate",
 		"Poland", "circa sand", "7.5-11", "moderate",     "moderate",
 		"Poland", "circa sand", "11-18",  "moderate",     "moderate",
-		
+
 		"Poland", "infra hard", "5-7.5",  "high",         "high",
 		"Poland", "infra hard", "7.5-11", "high",         "high",
 		"Poland", "infra hard", "11-18",  "high",         "high",
@@ -1056,12 +1088,12 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Poland", "infra mix", "< 5",    "moderate",      "moderate", # sens assumed
 		"Poland", "infra mix", "5-7.5",  "moderate",      "moderate",
 		"Poland", "infra mix", "7.5-11", "moderate",      "moderate",
-		
+
 		"Poland", "infra mud", "< 5",    "moderate",      "moderate", # sens assumed
 		"Poland", "infra mud", "5-7.5",  "moderate",      "moderate",
 		"Poland", "infra mud", "7.5-11", "moderate",      "moderate",
 		"Poland", "infra mud", "11-18",  "moderate",      "moderate",
-		
+
 		"Poland", "infra sand", "< 5",    "moderate",     "moderate", # sens assumed
 		"Poland", "infra sand", "5-7.5",  "moderate",     "moderate",
 		"Poland", "infra sand", "7.5-11", "moderate",     "moderate",
@@ -1071,37 +1103,37 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Russia", "circa hard", "5-7.5",  "moderate",     "moderate", # both values assumed
 		"Russia", "circa hard", "7.5-11", "moderate",     "moderate", # both values assumed
 		"Russia", "circa hard", "11-18",  "moderate",     "moderate", # both values assumed
-		
+
 		"Russia", "circa mix", "< 5",    "moderate",      "moderate", # both values assumed
 		"Russia", "circa mix", "5-7.5",  "moderate",      "moderate",
 		"Russia", "circa mix", "7.5-11", "moderate",      "moderate", # both values assumed
 		"Russia", "circa mix", "11-18",  "moderate",      "moderate", # both values assumed
-		
+
 		"Russia", "circa mud", "< 5",    "moderate",      "moderate", # both values assumed
 		"Russia", "circa mud", "5-7.5",  "moderate",      "moderate", # both values assumed
 		"Russia", "circa mud", "7.5-11", "moderate",      "moderate", # both values assumed
 		"Russia", "circa mud", "11-18",  "moderate",      "moderate", # both values assumed
-		
+
 		"Russia", "circa sand", "< 5",    "moderate",     "moderate", # both values assumed
 		"Russia", "circa sand", "5-7.5",  "moderate",     "moderate", # both values assumed
 		"Russia", "circa sand", "7.5-11", "moderate",     "moderate", # both values assumed
 		"Russia", "circa sand", "11-18",  "moderate",     "moderate", # both values assumed
-		
+
 		"Russia", "infra hard", "< 5",    "moderate",     "moderate", # both values assumed
 		"Russia", "infra hard", "5-7.5",  "moderate",     "moderate", # both values assumed
 		"Russia", "infra hard", "7.5-11", "moderate",     "moderate", # both values assumed
 		"Russia", "infra hard", "11-18",  "moderate",     "moderate", # both values assumed
-		
+
 		"Russia", "infra mix", "< 5",    "moderate",      "moderate", # both values assumed
 		"Russia", "infra mix", "5-7.5",  "moderate",      "moderate", # both values assumed
 		"Russia", "infra mix", "7.5-11", "moderate",      "moderate", # both values assumed
 		"Russia", "infra mix", "11-18",  "moderate",      "moderate", # both values assumed
-		
+
 		"Russia", "infra mud", "< 5",    "moderate",      "moderate", # both values assumed
 		"Russia", "infra mud", "5-7.5",  "moderate",      "moderate", # both values assumed
 		"Russia", "infra mud", "7.5-11", "moderate",      "moderate", # both values assumed
 		"Russia", "infra mud", "11-18",  "moderate",      "moderate", # both values assumed
-		
+
 		"Russia", "infra sand", "< 5",    "moderate",     "moderate", # both values assumed
 		"Russia", "infra sand", "5-7.5",  "moderate",     "moderate", # both values assumed
 		"Russia", "infra sand", "7.5-11", "moderate",     "moderate", # both values assumed
@@ -1113,61 +1145,61 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Sweden", "circa hard", "11-18",  "high",         "high",
 		"Sweden", "circa hard", "18-30",  "high",         "high",
 		"Sweden", "circa hard", "> 30",   "high",         "high",
-		
+
 		"Sweden", "circa mix", "< 5",    "moderate",      "low",
 		"Sweden", "circa mix", "5-7.5",  "moderate",      "low",
 		"Sweden", "circa mix", "7.5-11", "moderate",      "moderate",
 		"Sweden", "circa mix", "11-18",  "moderate",      "moderate",
 		"Sweden", "circa mix", "18-30",  "moderate",      "high",
 		"Sweden", "circa mix", "> 30",   "moderate",      "moderate",
-		
+
 		"Sweden", "circa mud", "< 5",    "moderate",      "low",
 		"Sweden", "circa mud", "5-7.5",  "moderate",      "moderate",
 		"Sweden", "circa mud", "7.5-11", "moderate",      "moderate",
 		"Sweden", "circa mud", "11-18",  "moderate",      "moderate",
 		"Sweden", "circa mud", "18-30",  "moderate",      "high",
 		"Sweden", "circa mud", "> 30",   "moderate",      "high",
-		
+
 		"Sweden", "circa sand", "< 5",    "moderate",     "low",
 		"Sweden", "circa sand", "5-7.5",  "moderate",     "moderate",
 		"Sweden", "circa sand", "7.5-11", "moderate",     "moderate",
 		"Sweden", "circa sand", "11-18",  "moderate",     "moderate",
 		"Sweden", "circa sand", "18-30",  "moderate",     "high",
 		"Sweden", "circa sand", "> 30",   "moderate",     "high",
-		
+
 		"Sweden", "infra hard", "< 5",    "high",         "low",
 		"Sweden", "infra hard", "5-7.5",  "high",         "moderate",
 		"Sweden", "infra hard", "7.5-11", "high",         "high",
 		"Sweden", "infra hard", "11-18",  "high",         "high",
 		"Sweden", "infra hard", "18-30",  "high",         "high",
 		"Sweden", "infra hard", "> 30",   "high",         "high",
-		
+
 		"Sweden", "infra mix", "< 5",    "moderate",      "low",
 		"Sweden", "infra mix", "5-7.5",  "moderate",      "moderate",
 		"Sweden", "infra mix", "7.5-11", "moderate",      "moderate",
 		"Sweden", "infra mix", "11-18",  "moderate",      "high",
 		"Sweden", "infra mix", "18-30",  "moderate",      "high",
 		"Sweden", "infra mix", "> 30",   "moderate",      "high",
-		
+
 		"Sweden", "infra mud", "< 5",    "moderate",      "low",
 		"Sweden", "infra mud", "5-7.5",  "moderate",      "moderate",
 		"Sweden", "infra mud", "7.5-11", "moderate",      "moderate",
 		"Sweden", "infra mud", "11-18",  "moderate",      "high",
 		"Sweden", "infra mud", "18-30",  "moderate",      "high",
 		"Sweden", "infra mud", "> 30",   "moderate",      "high",
-		
+
 		"Sweden", "infra sand", "< 5",    "moderate",     "low",
 		"Sweden", "infra sand", "5-7.5",  "moderate",     "moderate",
 		"Sweden", "infra sand", "7.5-11", "moderate",     "moderate",
 		"Sweden", "infra sand", "11-18",  "moderate",     "moderate",
 		"Sweden", "infra sand", "18-30",  "moderate",     "moderate", # s_surf assumed
 		"Sweden", "infra sand", "> 30",   "moderate",     "high"
-	)                                                           
-	
+	)
+
 	# counter for missing sensitivity assignments:
 	missCount <- 0
 	missData <- c()
-	
+
 	for(i in 1:nrow(tmp)) {
 		terr       <- tmp[[i, "Territory"]]
 		bio        <- tmp[[i, "Biotope"]]
@@ -1185,24 +1217,24 @@ if (! use_pre_calculated_data && do_cumi) {
 			bio == "Circalittoral mud" ~ "circa mud",
 			bio == "Circalittoral sand" ~ "circa sand",
 			bio == "Circalittoral mud or Circalittoral sand" ~ "???",
-			
+
 			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
 			bio == "Infralittoral coarse sediment" ~ "infra hard",
 			bio == "Infralittoral mixed sediment" ~ "infra mix",
 			bio == "Infralittoral mud" ~ "infra mud",
 			bio == "Infralittoral sand" ~ "infra sand",
 			bio == "Infralittoral mud or Infralittoral sand" ~ "???",
-			
+
 			bio == "Offshore circalittoral coarse sediment" ~ "circa hard",
 			bio == "Offshore circalittoral mixed sediment" ~ "circa mix",
 			bio == "Offshore circalittoral mud" ~ "circa mud",
 			bio == "Offshore circalittoral mud or Offshore circalittoral sand" ~ "???",
 			bio == "Offshore circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Offshore circalittoral sand" ~ "circa sand",
-			
+
 			TRUE ~ "other"
 		)
-		
+
 		if (sensi %in% c("Chara","Fucus","Furcellaria","Mytilus","Zostera")) {
 			# use high sensitivity:
 			tmp$sens[i] <- "high"
@@ -1270,13 +1302,13 @@ if (! use_pre_calculated_data && do_cumi) {
 			}
 		}
 	}
-	
+
 	if (missCount > 0) {
 		cat("Missing sensitivity information for:",missData,sep="\n")
 		cumi_message(paste("STOPPING here due to",missCount,"missing sensitivities!",sep=" "))
 		stop("CumI script ends here.")
 	}
-	
+
 	# this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
 	# in order to prevent errors in later spatial operations
 	biotopeLayer <- tmp %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
@@ -1426,7 +1458,7 @@ if (use_pre_calculated_data) {
 	} else {
 	  fishing_x <- st_read(fishing_file)
 	}
-	
+
 	fishingQuarters <- c("1","2","3","4")
 	makeAvg <- function(myLayer,myString) {
 		q <- quote(mutate(myLayer,sar_avg = myString))
@@ -1436,7 +1468,7 @@ if (use_pre_calculated_data) {
 	# treat the quarterly SAR values as not scaled properly, so we need to add the quarterly values per year
 	# and then go on with the yearly values if they exceed or are equal to 0.05:
 	cumi_message("... calculating MOP based on quarterly SAR values ...")
-	
+
 	# the following function doesn't work,
 	# R is completely the wrong language for this kind of parsing and evaluation ...
 	makeSum <- function(myLayer,myString,myYear) {
@@ -1445,7 +1477,7 @@ if (use_pre_calculated_data) {
 	  var <- paste0("sar_",myYear)
 	  mutate(myLayer, !!sym(var) := eval(parse(text="print(myString)")))
 	}
-	
+
 	fishingYearSARcolumns <- c()
 	for(myYear in assessmentYears) {
 	  fishingYearSARcolumns <- c(fishingYearSARcolumns,paste("sar_",myYear,sep=""))
@@ -1482,7 +1514,7 @@ if (use_pre_calculated_data) {
 		sar_avg >= 2							~ 'high',
 		TRUE									   ~ 'undefined'
 	))
-	
+
 	cumi_message("... cleaning up ...")
 	# we can now delete the columns we do not need in future
 	# and we can remove all polygons with no MOP
@@ -1491,13 +1523,13 @@ if (use_pre_calculated_data) {
 		dplyr::select(-starts_with("F20")) %>%
 		dplyr::select(-c("Shape_Leng","Shape_Area","sar_avg")) %>%
 		dplyr::filter(! MOP=='none') %>%
-		group_by(MOP) %>% 
+		group_by(MOP) %>%
 		st_make_valid()
-	
+
 	if (store_pressure_maps) {
 		st_write(fishing_x,pressure_maps_file, layer = "mop_1")
 	}
-	
+
 	if (do_cumi) {
 		cumi_message(" ... calculating fishing impact -> this will take a lot of time, so see you tomorrow or later ...")
 		# the my_union() in the following line is what takes 99.9% of the time in this pressure,
@@ -1506,16 +1538,17 @@ if (use_pre_calculated_data) {
 		# When doing the union with QGIS, some sliver polygons will result. These have missing biotope assignment and need to be
 		# deleted with `filter(! is.na(Biotope))`
 		#
-		# (for the current ssessment, the QGIS function was used)
+		# (for the current assessment, the QGIS function was used)
 		#
 		impact_map <- impact_map %>%
 			st_cast("MULTIPOLYGON") %>%
 			my_union(fishing_x) %>%
+		  filter(! is.na(Biotope)) %>%
 			st_cast("MULTIPOLYGON") %>%
 			dplyr::mutate(impact_1 = unname(mapply(cumi_get_impact,MOP,s_surf))) %>%
 			dplyr::select(-MOP) %>%
 			st_make_valid()
-		
+
 		# confidence:
 		impact_map <- impact_map %>% mutate(confidence_1 = "none")
 		impact_map$confidence_1[impact_map$Territory != "Russia"] <- "d3t3s1"
@@ -1582,11 +1615,11 @@ if (do_cumi) {
 }
 ```
 
-These are no polygon data for the assessment period.
+These are no polygon data for the assessment period (so the next part is skipped).
 
 ```{r eval=FALSE}
 cumi_message("... shellfish (areas) ...")
-mari_3_file <- file.path(myDir,"Data/...")
+mari_3_file <- file.path(myDir,"...")
 mari_3 <- st_read(mari_3_file)
 
 if (do_cumi || store_pressure_maps) {
@@ -1712,7 +1745,7 @@ if (do_cumi) {
 
 ```
 
-The following dataset represents dredging, as reported for HOLAS3 ad hoc data call and data reported according to Recommendation 36/2.  
+The following dataset represents dredging, as reported for HOLAS3 ad hoc data call and data reported according to Recommendation 36/2.
 
 The data layer contains polygon data for maintenance and capital dredging. There is information on the start and end year which could be used for a frequency evaluation (see proposal below). The field "depth" is assumed to mean the water depth.
 
@@ -1914,7 +1947,7 @@ cable_oc <- st_read(cable_file) %>%
 ### - apply impact in R
 # (the last line st_cast will also remove some nasty LINESTRING and MULTILINESTRING)
 #impact_map <- impact_map %>%
-#	dplyr::mutate(impact_4C := unname(mapply(cumi_get_impact,intensity,sens))) %>% 
+#	dplyr::mutate(impact_4C := unname(mapply(cumi_get_impact,intensity,sens))) %>%
 #	dplyr::select(-intensity) %>%
 #	filter(! is.na(Biotope)) %>%
 #	st_make_valid() %>%
@@ -2115,12 +2148,12 @@ ship_vect <- dplyr::mutate(ship_vect, intensity = case_when(
   depthzone == 2 ~ density/2.0,
   depthzone == 3 ~ density/4.0,
   depthzone == 4 ~ density/10.0,
-  TRUE ~ 0 
+  TRUE ~ 0
 ))
 
 # new attribute column 'MOP':
 # reclassify the intensity into the four MOP classes
-# (we ignore frequency at this stage, usinf the maverage density for now, 
+# (we ignore frequency at this stage, usinf the maverage density for now,
 # but frequency can be included following the proposal below).
 #
 # After the above steps, intensity values from 0 to 32166 remain. These are divided pragmatically into the uniform CumI scale:
@@ -2142,13 +2175,13 @@ if (store_pressure_maps) {
 
 if (do_cumi) {
 	# the union in the following statement took roughly 30 hours on my machine using the QGIS function, on ArcGIS the union fails with an unspecific error:
-	impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>% 
-		my_union(ship_vect) %>% 
-		dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>% 
+	impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>%
+		my_union(ship_vect) %>%
+		dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>%
 		dplyr::select(-c(MOP)) %>%
 		rename_geometry("geometry") %>%
 		filter(! is.na(Biotope))
-	
+
 	# confidence:
 	impact_map <- impact_map %>% mutate(confidence_7 = "d3t3s1")
 }
@@ -2174,13 +2207,13 @@ if (do_cumi) {
 	#
 	# make list of all impact columns to loop over:
 	impactColumns <- grep("impact_[1-9].?",names(impact_map),value=TRUE)
-	
+
 	# initialize a new column 'cumi' for the cumulative impact:
 	impact_map <- mutate(impact_map,cumi = NA)
-	
+
 	initialColumn <- impactColumns[1]
 	columnCount <- length(impactColumns)
-	
+
 	# loop over each polygon/multipolygon in the map:
 	print(paste("0 of",nrow(impact_map)))
 	for (myRowIndex in 1:nrow(impact_map)) {
@@ -2218,7 +2251,7 @@ print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 if (do_cumi) {
 	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
-	
+
 	# a complete file including the area of the polygons, loss and disturbance could be this:
 	# impact_map <- impact_map %>% mutate(area = st_area(impact_map))
 	# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
@@ -2230,7 +2263,6 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 - Biotope = HELCOM broadscale habitat
 - sens = general pressure-independant sensitivity
 - s_surf = sensitivity against surface abrasion due to bottom trawling
-- s_subsurf = sensitivity against subsurface penetration due to bottom trawling (not used in this assessment)
 - sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
 - level_2 = HELCOM subbasins 2018 (assessment units)
 - Territory = country name
@@ -2264,7 +2296,7 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 	- 6D: Coastal protection in operation, point data
 	- 7: Shipping, raster data
 - cumi: the final cumulative impact category
-	
+
 # Limitations in the assessment
 
 - currently only preliminary assignment of sensitivities to MSFD offshore biotopes
