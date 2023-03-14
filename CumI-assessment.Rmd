@@ -689,44 +689,15 @@ In the first step, the original map for the Baltic Sea[^1] (dated September 2021
 ```{r}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("starting with EMODnet biotopes ...")
-	biotopeBaltic_file <- file.path(myDir,"Biotopes/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
-	biotopeBalticLayer <- st_read(biotopeBaltic_file, layer="EUSeaMap_2021_Baltic") %>%
-		st_transform(coordSystem) %>%
+	biotopeBaltic_file <- "/Users/Torsten/Marilim/GIS/MSRL/Benthische Lebensräume/BHT-2023.gpkg"
+	areaCountryBiotopeLayer <- st_read(biotopeBaltic_file, layer="BHT") %>%
 		st_make_valid() %>%
 		# only keep the BHT column:
-		select(MSFD_BBHT) %>%
-		# rename geometry column so it fits to the Kattegat layer below:
-		rename_geometry("geom") %>%
-		rename(Biotope = MSFD_BBHT)
-	# the following file was produced from the original EMODnet geodatabase in QGIS (version 3.26.1) by
-	# 1. converting it to geopackage
-	# 2. buffering by 0 metres (thus repairing geomerty errors)
-	# 3. manually dividing objects around the Kattegat boundary
-	# 4. deleting all objects outside the Kattegat
-	biotopeKattegat_file <- file.path(myDir,"Biotopes/EUSeaMap_2021_Kattegat-v2.gpkg")
-	biotopeKattegatLayer <- st_read(biotopeKattegat_file, layer="EUSeaMap_2021_Kattegat") %>%
-		st_transform(coordSystem) %>%
-		st_cast("MULTIPOLYGON") %>%
-		st_make_valid() %>%
-		# onyl keep the BHT column and rename it to 'Biotope':
-		select(MSFD_BBHT) %>%
-		rename(Biotope = MSFD_BBHT)
-	# now merge the Baltic with the Kattegat
-	# (rbind is safe here as there is no spatial overlap and the attributes are the same):
-	biotopeBalticLayer <- rbind(biotopeBalticLayer,biotopeKattegatLayer)
-	# and add in the area and country information, essentially also clipping
-	# everything away that is outside the assessment area:
-	# (Note: this may also clip away parts of the assessment area when there is no biotope
-	# information there, but as we cannot use those parts without biotope information anyway, this is ok)
-	cumi_message("integrating area and country information ...")
-	areaCountryBiotopeLayer <- st_intersection(biotopeBalticLayer,areaCountryLayer)
-	# only retain the columns we need:
-	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>%
-		select(all_of(c("Biotope","level_2","HELCOM_ID","Territory")))
-	# last step is to clean the resulting data:
-	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>%
-		filter(st_geometry_type(areaCountryBiotopeLayer) %in% c("POLYGON","MULTIPOLYGON")) %>%
-		st_cast("MULTIPOLYGON")
+		select(BHT) %>%
+		rename(Biotope = BHT)
+	# areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>%
+	#	filter(st_geometry_type(areaCountryBiotopeLayer) %in% c("POLYGON","MULTIPOLYGON")) %>%
+	#	st_cast("MULTIPOLYGON")
 }
 ```
 
@@ -794,7 +765,7 @@ Now, we have an initial biotope layer with the corresponding information on subb
 ```{r}
 if (! use_pre_calculated_data && do_cumi) {
 		cumi_message("integrating salinity data ...")
-	salinity_file <- file.path(myDir,"Salinity/BALANCE_BOTTOM_SALINITY.tif")
+	salinity_file <- file.path(myDir,"../Data-2022/Salinity/BALANCE_BOTTOM_SALINITY.tif")
 	salinityLayer <- rast(salinity_file)
 	# convert to vector data:
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
@@ -987,11 +958,13 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Germany", "infra mix", "11-18",  "moderate",     "low",
 		"Germany", "infra mix", "18-30",  "moderate",     "high",
 
+		"Germany", "infra mud", "< 5",    "moderate",     "moderate", # analogue to 5-7.5 psu in this group
 		"Germany", "infra mud", "5-7.5",  "moderate",     "moderate",
 		"Germany", "infra mud", "7.5-11", "moderate",     "moderate",
 		"Germany", "infra mud", "11-18",  "moderate",     "moderate",
 		"Germany", "infra mud", "18-30",  "moderate",     "high",
 
+		"Germany", "infra sand", "< 5",    "moderate",    "moderate", # analogue to 5-7.5 psu in this group
 		"Germany", "infra sand", "5-7.5",  "moderate",    "moderate",
 		"Germany", "infra sand", "7.5-11", "moderate",    "moderate",
 		"Germany", "infra sand", "11-18",  "moderate",    "high",
@@ -1201,7 +1174,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	missData <- c()
 
 	for(i in 1:nrow(tmp)) {
-		terr       <- tmp[[i, "Territory"]]
+		terr       <- "Germany"
 		bio        <- tmp[[i, "Biotope"]]
 		sal        <- tmp[[i, "Sal2"]]
 		sensi      <- tmp[[i, "sens_spec"]]
@@ -1212,18 +1185,17 @@ if (! use_pre_calculated_data && do_cumi) {
 		#
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
-			bio == "Circalittoral coarse sediment" ~ "circa hard",
-			bio == "Circalittoral mixed sediment" ~ "circa mix",
-			bio == "Circalittoral mud" ~ "circa mud",
-			bio == "Circalittoral sand" ~ "circa sand",
-			bio == "Circalittoral mud or Circalittoral sand" ~ "???",
+			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
+			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # miss-spelling
+			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
+			bio == "Schlickböden des Circalitorals" ~ "circa mud",
+			bio == "Sandböden des Circalitorals" ~ "circa sand",
 
 			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
-			bio == "Infralittoral coarse sediment" ~ "infra hard",
-			bio == "Infralittoral mixed sediment" ~ "infra mix",
-			bio == "Infralittoral mud" ~ "infra mud",
-			bio == "Infralittoral sand" ~ "infra sand",
-			bio == "Infralittoral mud or Infralittoral sand" ~ "???",
+			bio == "Grobsedimente des Infralitorals" ~ "infra hard",
+			bio == "Mischsedimente des Infralitorals" ~ "infra mix",
+			bio == "Schlickböden des Infralitorals" ~ "infra mud",
+			bio == "Sandböden des Infralitorals" ~ "infra sand",
 
 			bio == "Offshore circalittoral coarse sediment" ~ "circa hard",
 			bio == "Offshore circalittoral mixed sediment" ~ "circa mix",
@@ -1231,6 +1203,8 @@ if (! use_pre_calculated_data && do_cumi) {
 			bio == "Offshore circalittoral mud or Offshore circalittoral sand" ~ "???",
 			bio == "Offshore circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Offshore circalittoral sand" ~ "circa sand",
+			
+			bio == "NA" ~ "???",
 
 			TRUE ~ "other"
 		)
@@ -1245,43 +1219,10 @@ if (! use_pre_calculated_data && do_cumi) {
 				tmp$sens[i] <- "moderate"
 				tmp$s_surf[i] <- "moderate"
 			} else if (shortName == "???") {
-				# if the biotope is either of two possibilities,
-				# precautionarily take the one leading to higher sensitivity:
-				zone <- substr(str_to_lower(word(bio,1)),1,5)
-				if (zone == "offsh") {zone <- "circa"}
-				s1a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$sens
-				if (rlang::is_empty(s1a)) {
-					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
-					s1a <- ""
-					missCount <- missCount + 1
-				}
-				s1b <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"sand",sep=" ") & Sal2 == sal)$sens
-				if (rlang::is_empty(s1b)) {
-					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
-					s1b <- ""
-					missCount <- missCount + 1
-				}
-				s1 <- c(s1a,s1b)
-				s1factor <- factor(s1, levels = cumi_categories, ordered = TRUE)
-				s1max <- as.character(max(s1factor))
-				tmp$sens[i] <- s1max
-				#
-				s2a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$s_surf
-				if (rlang::is_empty(s2a)) {
-					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
-					s2a <- ""
-					missCount <- missCount + 1
-				}
-				s2b <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"sand",sep=" ") & Sal2 == sal)$s_surf
-				if (rlang::is_empty(s2b)) {
-					missData <- union(missData,paste(terr,bio,"(",shortName,")",sal,sep=" "))
-					s2b <- ""
-					missCount <- missCount + 1
-				}
-				s2 <- c(s2a,s2b)
-				s2factor <- factor(s2, levels = cumi_categories, ordered = TRUE)
-				s2max <- as.character(max(s2factor))
-				tmp$s_surf[i] <- s2max
+				# if the biotope is unclear,
+				# precautionarily assume a higher sensitivity:
+				tmp$sens[i] <- "high"
+				tmp$s_surf[i] <- "high"
 			} else {
 				# standard case:
 				sA <- subset(cumi_Sensitivities, Territory==terr & Biotope == shortName & Sal2 == sal)$sens
@@ -1313,7 +1254,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	# in order to prevent errors in later spatial operations
 	biotopeLayer <- tmp %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
 	# as a last step write the layer to a file:
-	st_write(biotopeLayer,file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg"))
+	st_write(biotopeLayer,file.path(myDir,"Biotopes/biotopes-pre_calculated-DE.gpkg"))
 }
 ```
 
@@ -1333,7 +1274,7 @@ The (pre-calculated) biotope layer now has these attribute columns:
 ```{r}
 if (use_pre_calculated_data && do_cumi) {
 	cumi_message("loading biotope layer ...")
-	biotope_file <- file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg")
+	biotope_file <- file.path(myDir,"Biotopes/biotopes-pre_calculated-DE.gpkg")
 	biotopeLayer <- st_read(biotope_file)
 }
 ```
@@ -1354,7 +1295,7 @@ If the pressure maps are to be stored, we here set up the file for storain the M
 
 ```{r}
 if (store_pressure_maps) {
-	pressure_maps_file <- file.path(myDir,paste("Results/CumI-pressure-maps-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= ""))
+	pressure_maps_file <- file.path(myDir,paste("Results/CumI-pressure-maps-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= ""))
 }
 ```
 
@@ -1554,7 +1495,7 @@ if (use_pre_calculated_data) {
 		impact_map$confidence_1[impact_map$Territory != "Russia"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 != "none"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 == "none"] <- "d0t0s0"
-		st_write(impact_map,file.path(myDir,"Fishery/fishery_pre_calculated.gpkg"))
+		st_write(impact_map,file.path(myDir,"Fishery/fishery_pre_calculated-DE.gpkg"))
 	}
 }
 
@@ -1657,9 +1598,7 @@ if (do_cumi || store_pressure_maps) {
 if (do_cumi) {
 	# confidence:
 	impact_map <- impact_map %>% mutate(confidence_3A = "none")
-	impact_map$confidence_3A[impact_map$Territory %in% c("Estonia","Finland","Germany")] <- "d1t3s1"
-	impact_map$confidence_3A[! impact_map$Territory %in% c("Estonia","Finland","Germany","Russia")] <- "d0t0s0"
-	impact_map$confidence_3A[impact_map$Territory %in% c("Russia")] <- "d1t0s1"
+	impact_map$confidence_3A <- "d1t3s1"
 }
 
 ```
@@ -2249,12 +2188,12 @@ print(n2)
 print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
 if (do_cumi) {
-	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
-	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 
 	# a complete file including the area of the polygons, loss and disturbance could be this:
 	# impact_map <- impact_map %>% mutate(area = st_area(impact_map))
-	# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-DE",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 }
 ```
 
