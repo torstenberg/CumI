@@ -1,7 +1,7 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2023-01-30
+date: 2023-03-14
 output: html_document
 editor_options:
   chunk_output_type: console
@@ -633,7 +633,7 @@ use_pre_calculated_data <- FALSE
 The pressure maps that are produced by e.g. buffering or by intersecting intensity and frequency, are not stored by default. With the following setting you can let them be stored in a separate Geopackage file. Note: these layers are consequently not clipped to the biotope map as the CumI is when doing the assessment. Further note: setting `store_pressure_maps` to TRUE only gives the desired result for all layers when setting `use_pre_calculated_data` to FALSE at the same time:
 
 ```{r}
-store_pressure_maps <- TRUE
+store_pressure_maps <- FALSE
 ```
 
 Normally, you want the CumI assessment to be done. But if you only want the pressure maps and not the actual CumI calculations (which will be much quicker in terms of processing time), i.e. not the overlay with biotoptes and sensitivity and the cumulation, then you can turn it off here:
@@ -646,6 +646,12 @@ The data use the CumI categories "very low", "low", "moderate" and "high" for va
 
 ```{r}
 cumi_categories <- c("very low","low","moderate","high")
+```
+
+Sometimes, it can be necessary to skip the step where the sensitivities are modified by the layer with the distribution of some specific species. This can be configured here:
+
+```{r}
+cumi_skip_species <- TRUE
 ```
 
 
@@ -688,7 +694,7 @@ In the first step, the original map for the Baltic Sea[^1] (dated September 2021
 
 ```{r}
 if (! use_pre_calculated_data && do_cumi) {
-	cumi_message("starting with EMODnet biotopes ...")
+	cumi_message("starting with German biotopes ...")
 	biotopeBaltic_file <- "/Users/Torsten/Marilim/GIS/MSRL/Benthische Lebensräume/BHT-2023.gpkg"
 	areaCountryBiotopeLayer <- st_read(biotopeBaltic_file, layer="BHT") %>%
 		st_make_valid() %>%
@@ -714,45 +720,47 @@ if (! use_pre_calculated_data && do_cumi) {
 	# this new column will hold all the species information later:
 	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
 
-	for(myfile in c(
-		"Chara_distribution.tif",
-		"Fucus_distribution_2018.tif",
-		"Furcellaria_distribution.tif",
-		"Mytilus_distribution.tif",
-		"Zostera_marina_distribution_2018.tif"
-	)) {
-		myShort <- substring(myfile,1,5)
-		cumi_message(paste("... ", myfile, sep=""))
-		mydata <- rast(file.path(species_folder,myfile))
-		# convert to vector data:
-		mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
-		# only cells with band1 = 1 have the species, so we discard the rest:
-		names(mydata_poly)[1] <- "present"
-		mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
-		myName <- case_when(
-			myShort == "Chara" ~ "Chara",
-			myShort == "Fucus" ~ "Fucus",
-			myShort == "Furce" ~ "Furcellaria",
-			myShort == "Mytil" ~ "Mytilus",
-			myShort == "Zoste" ~ "Zostera",
-			TRUE ~ "undefined"
-		)
-		# for Zostera, ignore any vegetation below 10m depth:
-		if (myShort == "Zoste") {
-			depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
-			tmp <- terra::extract(depths,mydata_poly, 'mean')
-			sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
-		} else  {
-			sf_data <- st_as_sf(mydata_poly)
-		}
-		# dissolve and add species information:
-		sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
-		# now include the data into the biotope map:
-		areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
-		areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
-		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
-		# remove all features without biotope, they are outside the assessment area:
-		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
+	if (! cumi_skip_species) {
+  	for(myfile in c(
+  		"Chara_distribution.tif",
+  		"Fucus_distribution_2018.tif",
+  		"Furcellaria_distribution.tif",
+  		"Mytilus_distribution.tif",
+  		"Zostera_marina_distribution_2018.tif"
+  	)) {
+  		myShort <- substring(myfile,1,5)
+  		cumi_message(paste("... ", myfile, sep=""))
+  		mydata <- rast(file.path(species_folder,myfile))
+  		# convert to vector data:
+  		mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
+  		# only cells with band1 = 1 have the species, so we discard the rest:
+  		names(mydata_poly)[1] <- "present"
+  		mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
+  		myName <- case_when(
+  			myShort == "Chara" ~ "Chara",
+  			myShort == "Fucus" ~ "Fucus",
+  			myShort == "Furce" ~ "Furcellaria",
+  			myShort == "Mytil" ~ "Mytilus",
+  			myShort == "Zoste" ~ "Zostera",
+  			TRUE ~ "undefined"
+  		)
+  		# for Zostera, ignore any vegetation below 10m depth:
+  		if (myShort == "Zoste") {
+  			depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
+  			tmp <- terra::extract(depths,mydata_poly, 'mean')
+  			sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
+  		} else  {
+  			sf_data <- st_as_sf(mydata_poly)
+  		}
+  		# dissolve and add species information:
+  		sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
+  		# now include the data into the biotope map:
+  		areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
+  		areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
+  		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
+  		# remove all features without biotope, they are outside the assessment area:
+  		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
+  	}
 	}
 }
 ```
@@ -1196,6 +1204,7 @@ if (! use_pre_calculated_data && do_cumi) {
 			bio == "Mischsedimente des Infralitorals" ~ "infra mix",
 			bio == "Schlickböden des Infralitorals" ~ "infra mud",
 			bio == "Sandböden des Infralitorals" ~ "infra sand",
+			bio == "Felsen und biogene Riffe des Infralitorals" ~ "infra hard",
 
 			bio == "Offshore circalittoral coarse sediment" ~ "circa hard",
 			bio == "Offshore circalittoral mixed sediment" ~ "circa mix",
@@ -1503,7 +1512,7 @@ if (use_pre_calculated_data) {
 ### 2. Mariculture
 
 ```{r}
-cumi_message("processing of mariculture ...")
+cumi_message("processing of mariculture ...")<
 ```
 
 The following dataset contains point data from the HELCOM Pollution Load Compilation (PLC) data collection covering the period from 2016 to 2020. The data also show in which years there has been some production. This could in future be used to apply a pressure frequency calculation (see proposal below).
