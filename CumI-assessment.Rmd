@@ -41,6 +41,7 @@ Set the directory of the data folder in the following code chunk.
 ```{r setup}
 # --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
 myDir <- "/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/CumI-R/Data-2023-01-20"
+myDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
 ```
 
 # R packages to use
@@ -171,7 +172,7 @@ my_union <- function(a,b) {
 	# sometimes, the union results in some MULTILINESTRINGS - we must delete those:
 	if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
 		cumi_message("... deleting MULTILINESTRINGs from last union ...")
-		result <- result %>% filter(st_geometry_type() %in% c("POLYGON","MULTIPOLYGON"))
+		result <- result %>% filter(st_geometry_type(result) %in% c("POLYGON","MULTIPOLYGON"))
 	}
 	return(result)
 }
@@ -510,7 +511,8 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	}
 
 	# footprint zone as 'loss':
-	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
+	if (footprint & (st_geometry_type(pressureData,by_geometry=FALSE) == "POLYGON" |
+	    st_geometry_type(pressureData,by_geometry=FALSE) == "MULTIPOLYGON")) {
 		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
 			st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 		if (exists("output")) {
@@ -1185,7 +1187,7 @@ if (! use_pre_calculated_data && do_cumi) {
 		terr       <- "Germany"
 		bio        <- tmp[[i, "Biotope"]]
 		sal        <- tmp[[i, "Sal2"]]
-		sensi      <- tmp[[i, "sens_spec"]]
+		sensi      <- "none"
 		#
 		# - translate short names to MSFD long names
 		# - use "infra/circa hard" biotopes for MSFD coarse sediments and rock/reef
@@ -1205,6 +1207,20 @@ if (! use_pre_calculated_data && do_cumi) {
 			bio == "Schlickböden des Infralitorals" ~ "infra mud",
 			bio == "Sandböden des Infralitorals" ~ "infra sand",
 			bio == "Felsen und biogene Riffe des Infralitorals" ~ "infra hard",
+			
+			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
+			bio == "Circalittoral coarse sediment" ~ "circa hard",
+			bio == "Circalittoral mixed sediment" ~ "circa mix",
+			bio == "Circalittoral mud" ~ "circa mud",
+			bio == "Circalittoral sand" ~ "circa sand",
+			bio == "Circalittoral mud or Circalittoral sand" ~ "???",
+
+			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
+			bio == "Infralittoral coarse sediment" ~ "infra hard",
+			bio == "Infralittoral mixed sediment" ~ "infra mix",
+			bio == "Infralittoral mud" ~ "infra mud",
+			bio == "Infralittoral sand" ~ "infra sand",
+			bio == "Infralittoral mud or Infralittoral sand" ~ "???",
 
 			bio == "Offshore circalittoral coarse sediment" ~ "circa hard",
 			bio == "Offshore circalittoral mixed sediment" ~ "circa mix",
@@ -2197,8 +2213,8 @@ print(n2)
 print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
 if (do_cumi) {
-	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
-	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-EUSeaMap-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-EUSeaMap-DE-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 
 	# a complete file including the area of the polygons, loss and disturbance could be this:
 	# impact_map <- impact_map %>% mutate(area = st_area(impact_map))
