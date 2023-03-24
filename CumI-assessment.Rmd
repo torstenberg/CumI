@@ -1,7 +1,7 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2023-01-30
+date: 2023-03-24
 output: html_document
 editor_options:
   chunk_output_type: console
@@ -40,13 +40,13 @@ Set the directory of the data folder in the following code chunk.
 
 ```{r setup}
 # --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
-myDir <- "/Users/Torsten/Marilim/OneDrive/OneDrive - MariLim Gesellschaft für Gewässeruntersuchung mbH/MSRL/CumI-R/Data-2023-01-20"
+myDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
 ```
 
 # R packages to use
 The R code uses the following libraries which should be installed first (if not present):
 
-```{r}
+```{r loadPackages}
 n1 <- Sys.time()
 print(paste("--- CumI ---: starting at",n1,sep=" "))
 print("--- CumI ---: loading libraries ...")
@@ -61,7 +61,7 @@ library(terra) # for species raster data
 
 # Some R functions
 
-```{r include=FALSE}
+```{r message include=FALSE}
 print("--- CumI ---: defining some R functions ...")
 ```
 
@@ -69,7 +69,7 @@ print("--- CumI ---: defining some R functions ...")
 
 R has no function corresponding to a true union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code ist from [stackowerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
 
-```{r eval=FALSE}
+```{r plainUnion eval=FALSE}
 a1 <- st_polygon(list(rbind(c(0, 10), c(45, 10), c(45, 90), c(0, 90), c(0, 10))))
 a2 <- st_polygon(list(rbind(c(45, 10), c(90,10), c(90, 90), c(45, 90), c(45, 10))))
 b1 <- st_polygon(list(rbind(c(15, 5), c(75, 5), c(75, 50), c(15, 50), c(15, 5))))
@@ -103,7 +103,7 @@ union <- rbind(op11, op22, op3)
 
 From this, we can make a union function that can work with arbitrary sf objects:
 
-```{r eval=FALSE}
+```{r sfUnion eval=FALSE}
 library(plyr)
 
 my_union_sf <- function(a,b) {
@@ -125,7 +125,7 @@ my_union_sf <- function(a,b) {
 
 Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some transforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
 
-```{r eval=FALSE}
+```{r rasterUnion eval=FALSE}
 library(sp) # used by 'raster'
 library(raster) # provides: raster::union()
 
@@ -151,7 +151,7 @@ Unfortunately, also this function turns out to be quite slow ...
 
 If a recent version of QGIS is present (version 3.14.16 or newer), we therefor should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
 
-```{r}
+```{r QGISUnion}
 # needs QGIS 3.14.16 or newer
 # Installation:
 # install.packages("remotes")
@@ -171,7 +171,7 @@ my_union <- function(a,b) {
 	# sometimes, the union results in some MULTILINESTRINGS - we must delete those:
 	if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
 		cumi_message("... deleting MULTILINESTRINGs from last union ...")
-		result <- result %>% filter(st_geometry_type() %in% c("POLYGON","MULTIPOLYGON"))
+		result <- result %>% filter(st_geometry_type(result) %in% c("POLYGON","MULTIPOLYGON"))
 	}
 	return(result)
 }
@@ -179,7 +179,7 @@ my_union <- function(a,b) {
 
 After an initial and not comprehensive test, it seems that the union function in the new terra package is even faster than using a QGIS process for smaller files:
 
-```{r eval=FALSE}
+```{r terraUnion eval=FALSE}
 my_union <- function(a,b) {
 	if (! class(a)[1] == "spatVector") {a <- vect(a)}
 	if (! class(b)[1] == "spatVector") {b <- vect(b)}
@@ -193,7 +193,7 @@ If you can't use QGIS or terra, you will need to rename one of the first two uni
 
 Sometimes, we need to rename the geometry column of an sf object, since sf itself will give it some weird names:
 
-```{r}
+```{r rename_geometry}
 rename_geometry <- function(g, name){
 	#
 	# rename the geometry columns (sfc) to a user-defined name
@@ -215,7 +215,7 @@ The actual assessment using the CumI applies a range of 'matrix operations' wher
 
 The first rule combines resilience and resistance of a biotope to derive the resulting biotope sensitivity:
 
-```{r}
+```{r cumi_sensi_matrix}
 print("--- CumI ---: defining CumI objects and functions ...")
 
 # the sensitivity matrix:
@@ -250,7 +250,7 @@ cumi_get_sensi <- function(resist,resil) {
 
 The second rule combines intensity and frequency to derive the magnitude of impact (MOP) of a pressure:
 
-```{r}
+```{r cumi_mop_matrix}
 # the MOP matrix:
 cumi_MOP_matrix <- tribble(
     ~intensity, ~frequency_persistent, ~frequency_frequent, ~frequency_regular, ~frequency_occasional,
@@ -283,7 +283,7 @@ cumi_get_MOP <- function(inten,freq) {
 
 The third rule combines biotope sensitivity and the physical magnitude of pressure (= MOP) to derive the assumed impact:
 
-```{r}
+```{r cumi_impact_matrix}
 cumi_impact_matrix <- tribble(
 	~sensitivity, ~MOP_high, ~MOP_moderate, ~MOP_low,	~MOP_verylow,
 	"high",		 "high",	 "high",		  "m2",		 "m1",
@@ -317,7 +317,7 @@ cumi_get_impact <- function(MOP,sensi) {
 
 The fourth rule combines two impacts when these are cumulated in the last step of the assessment:
 
-```{r}
+```{r cumi_cumulation_matrix}
 # the cumulation matrix:
 cumi_cumulation_matrix <- tribble(
 	~imp1,		 ~imp2_high, ~imp2_m3, ~imp2_m2, ~imp2_m1, ~imp2_low, ~imp2_verylow,
@@ -361,7 +361,7 @@ Some of the pressures work with a buffering. This means, the pressure is acting 
 
 The table also lists whether there is a buffer zone counting as 'loss' (~buffer\_loss) and whether the pressure footprint itself (in case of polygone data) is treated as loss (~footprint\_as\_loss).
 
-```{r}
+```{r cumi_buffers}
 #
 # buffer models for pressure intensity
 #
@@ -398,7 +398,7 @@ cumi_buffers <- tribble(
 
 ```
 
-```{r}
+```{r cumi_buffers_DE}
 # fishing: wie bei HELCOM, abweichend von alter Fallstudie (Kumulation von surface+subsurface)
 #
 
@@ -432,7 +432,7 @@ cumi_buffers_de <- tribble(
 
 The following function uses the above buffer models to calculate the concrete spatial extent of the various intensity zones for a given pressure:
 
-```{r}
+```{r cumi_buffer_intensity}
 cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	#
 	# build an sf object that holds all different intensity zones and a loss zone
@@ -510,7 +510,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	}
 
 	# footprint zone as 'loss':
-	if (footprint & st_geometry_type(pressureData,by_geometry=FALSE) != "POINT") {
+	if (footprint & (st_geometry_type(pressureData,by_geometry=FALSE) %in% c("POLYGON","MULTIPOLYGON"))) {
 		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
 			st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 		if (exists("output")) {
@@ -527,7 +527,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 In order to make the script a bit more concise, a function combining some standard steps into one go is used. It reads the opened pressure GIS layer, assuming it is having a valid geometry/topology and the correct coordinate system, applies the buffer model, clips the resulting layer at the boundary of the biotope layer, includes it into the final impact layer and calculates the impact (and deletes the now superfluous 'int' column):
 
 
-```{r}
+```{r cumi_process_pressure}
 cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	#
 	# apply a buffer model to a GIS layer with pressures,
@@ -578,7 +578,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 Last, and not least, we want some regular feedback from the script, since some of the operations (especially the GIS union) are taking some time:
 
 
-```{r}
+```{r get_running_time}
 get_running_time <- function(n1,n2) {
 	#
 	# return the difference between to Sys.time() values an minutes,
@@ -607,24 +607,24 @@ cumi_message <- function(msg) {
 # The assessment
 
 ## Setup
-Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps. Further, we define here the list of years for which the assessment is done.
+Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps. Further, we define here the list of years for which the assessment is done. Note: transforming of data to `coordSystem` is not done everywhere in the code, only when the currently used input data do not match. So, if you use other data you must modify the code to take care of the transformation yourself.
 
 Then, a variable is set which determined whether this script uses some pre-calculated files which otherwise would need a huge amount of comupting time to assemble.
 
-```{r}
+```{r coordSystem}
 cumi_message("setting up the assessment ...")
 coordSystem <- 3035
 ```
 
 We then define the assessment years to use:
 
-```{r}
+```{r assessmentYears}
 assessmentYears <- c("2016","2017","2018","2019","2020","2021")
 ```
 
 As the processing of the clipLayer and the bottom trawling pressure take veeery looong (approx. 7 hours for bottom trawling on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure, a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling. I.e., the pre-calculated layer already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has the MOP from trawling included.
 
-```{r}
+```{r use_pre_calculated_data}
 # You can choose to either use the pre-calculated data (set `use_pre_calculated_data` to `TRUE`) for the further process, or re-calculate it here (set it to `FALSE`).
 #
 use_pre_calculated_data <- FALSE
@@ -632,27 +632,41 @@ use_pre_calculated_data <- FALSE
 
 The pressure maps that are produced by e.g. buffering or by intersecting intensity and frequency, are not stored by default. With the following setting you can let them be stored in a separate Geopackage file. Note: these layers are consequently not clipped to the biotope map as the CumI is when doing the assessment. Further note: setting `store_pressure_maps` to TRUE only gives the desired result for all layers when setting `use_pre_calculated_data` to FALSE at the same time:
 
-```{r}
+```{r store_pressure_maps}
 store_pressure_maps <- TRUE
 ```
 
 Normally, you want the CumI assessment to be done. But if you only want the pressure maps and not the actual CumI calculations (which will be much quicker in terms of processing time), i.e. not the overlay with biotoptes and sensitivity and the cumulation, then you can turn it off here:
 
-```{r}
+```{r do_cumi}
 do_cumi <- TRUE
 ```
 
 The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
 
-```{r}
+```{r cumi_categories}
 cumi_categories <- c("very low","low","moderate","high")
+```
+
+Sometimes, it can be necessary to skip the step where the sensitivities are modified by the layer with the distribution of some specific species. This can be configured here:
+
+```{r cumi_skip_species}
+cumi_skip_species <- FALSE
+```
+
+The files produces by this script have specific names. You can add a suffix to these names when you want to distinguish several scenarios. The suffix will be inserted into the file just before the date/time portion if there is one, otherwise it will be inserted at the end:
+
+```{r cumi_file_suffix}
+#cumi_file_suffix <- "DE"
+#cumi_file_suffix <- "EUSeaMap-DE"
+cumi_file_suffix <- "HOLAS3"
 ```
 
 
 ## The assessment area
 The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
 
-```{r}
+```{r assessmentArea}
 if (! use_pre_calculated_data) {
 	cumi_message("preparing assessment area layer ...")
 	area_file <- file.path(myDir,"Base/HELCOM_subbasins_2022.shp")
@@ -668,7 +682,7 @@ if (! do_cumi && store_pressure_maps) {
 
 To enable assigning data to specific countries, the assessment area is supplemented with country information. The countries are taken from the *EMODnet Human Activities* data file `Emodnet_HA_OtherManagementsAreas_EEZ_20180629`. As the spatial coverage of the country data sometimes is smaller than the coverage of the assessment area, the country area was extended manually on the terrestrial side so the complete assessment area is within a specific country.
 
-```{r}
+```{r countries}
 # TODO: update available: EMODnet_HA_OtherManagementAreas_EEZ_v11_20210506
 # <https://www.emodnet-humanactivities.eu/search-results.php?dataname=Exclusive+Economic+Zone>
 if (! use_pre_calculated_data && do_cumi) {
@@ -686,9 +700,9 @@ The biotope map is based on the *EMODnet broad-scale seabed habitat map for Euro
 ### Biotope, country and assessment area data
 In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
 
-```{r}
+```{r biotopeMap}
 if (! use_pre_calculated_data && do_cumi) {
-	cumi_message("starting with EMODnet biotopes ...")
+	cumi_message("starting with biotopes ...")
 	biotopeBaltic_file <- file.path(myDir,"Biotopes/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
 	biotopeBalticLayer <- st_read(biotopeBaltic_file, layer="EUSeaMap_2021_Baltic") %>%
 		st_transform(coordSystem) %>%
@@ -734,55 +748,58 @@ if (! use_pre_calculated_data && do_cumi) {
 Some taxa inhabiting specific areas lead to a 'high' sensitivity towards the pressures in the later process. The spatial data for these taxa is taken from HELCOM MADS (Biodiversity > Ecosystem components (BSII) > Benthic species). The taxa are the genera *Mytilus, Zostera, Furcellaria, Fucus, Chara*. We include this information into the biotope map in a new column 'sens_spec':
 
 
-```{r}
+```{r species_data}
 if (! use_pre_calculated_data && do_cumi) {
-	cumi_message("including information on sensitive species ...")
-
-	species_folder <- file.path(myDir,"Biotopes/Benthic species")
-
-	# this new column will hold all the species information later:
-	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
-
-	for(myfile in c(
-		"Chara_distribution.tif",
-		"Fucus_distribution_2018.tif",
-		"Furcellaria_distribution.tif",
-		"Mytilus_distribution.tif",
-		"Zostera_marina_distribution_2018.tif"
-	)) {
-		myShort <- substring(myfile,1,5)
-		cumi_message(paste("... ", myfile, sep=""))
-		mydata <- rast(file.path(species_folder,myfile))
-		# convert to vector data:
-		mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
-		# only cells with band1 = 1 have the species, so we discard the rest:
-		names(mydata_poly)[1] <- "present"
-		mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
-		myName <- case_when(
-			myShort == "Chara" ~ "Chara",
-			myShort == "Fucus" ~ "Fucus",
-			myShort == "Furce" ~ "Furcellaria",
-			myShort == "Mytil" ~ "Mytilus",
-			myShort == "Zoste" ~ "Zostera",
-			TRUE ~ "undefined"
-		)
-		# for Zostera, ignore any vegetation below 10m depth:
-		if (myShort == "Zoste") {
-			depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
-			tmp <- terra::extract(depths,mydata_poly, 'mean')
-			sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
-		} else  {
-			sf_data <- st_as_sf(mydata_poly)
-		}
-		# dissolve and add species information:
-		sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
-		# now include the data into the biotope map:
-		areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
-		areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
-		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
-		# remove all features without biotope, they are outside the assessment area:
-		areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
-	}
+  cumi_message("including information on sensitive species ...")
+  
+  species_folder <- file.path(myDir,"Biotopes/Benthic species HOLAS 3")
+  
+  # this new column will hold all the species information later:
+  areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
+  
+  if (! cumi_skip_species) {
+    for(myfile in c(
+      "_ags_EC_23/EC_23.tif",
+      "_ags_EC_25/EC_25.tif",
+      "_ags_EC_21/EC_21.tif",
+      "_ags_EC_24/EC_24.tif",
+      "_ags_EC_22/EC_22.tif"
+    )) {
+      myShort <- substring(myfile,9,10)
+      myName <- case_when(
+        myShort == "23" ~ "Chara",
+        myShort == "25" ~ "Fucus",
+        myShort == "21" ~ "Furcellaria",
+        myShort == "24" ~ "Mytilus",
+        myShort == "22" ~ "Zostera",
+        TRUE ~ "undefined"
+      )
+      cumi_message(paste("... ", myfile, ", ",myName, sep=""))
+      mydata <- rast(file.path(species_folder,myfile))
+      # convert to vector data:
+      mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
+      # only cells with band1 = 1 have the species, so we discard the rest:
+      names(mydata_poly)[1] <- "present"
+      mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
+      # for Zostera, ignore any vegetation below 10m depth:
+      if (myName == "Zostera") {
+        depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
+        tmp <- terra::extract(depths,mydata_poly, 'mean')
+        sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
+      } else  {
+        sf_data <- st_as_sf(mydata_poly)
+      }
+      # dissolve and add species information:
+      sf_data <- sf_data %>% st_union() %>% st_as_sf() %>% st_cast("POLYGON") %>% mutate(spec = myName)
+      # now include the data into the biotope map:
+      areaCountryBiotopeLayer <- my_union(areaCountryBiotopeLayer,sf_data)
+      areaCountryBiotopeLayer$sens_spec[! is.na(areaCountryBiotopeLayer$spec)] <- myName
+st_write(areaCountryBiotopeLayer,paste("/Users/Torsten/species_",myShort,".gpkg"))
+      areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% select(-spec)
+      # remove all features without biotope, they are outside the assessment area:
+      areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% filter(! is.na(Biotope))
+    }
+  }
 }
 ```
 
@@ -791,10 +808,10 @@ Note, the name of the taxon in the column 'sens_spec' may have been overridden o
 ### Salinity data
 Now, we have an initial biotope layer with the corresponding information on subbasin and country. The next step is to include data on the bottom salinity so we have all information needed to assign sensitivity values to the habitat. For this, we assign the bottom salinity from the HELCOM BALANCE project:
 
-```{r}
+```{r salinityData}
 if (! use_pre_calculated_data && do_cumi) {
 		cumi_message("integrating salinity data ...")
-	salinity_file <- file.path(myDir,"Salinity/BALANCE_BOTTOM_SALINITY.tif")
+	salinity_file <- file.path(myDir,"../Data-2022/Salinity/BALANCE_BOTTOM_SALINITY.tif")
 	salinityLayer <- rast(salinity_file)
 	# convert to vector data:
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
@@ -843,7 +860,7 @@ There is a limitation in the salinity dataset. It does not cover the entire asse
 In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same countr/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
 
 
-```{r}
+```{r assignSensitivites}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("assign sensitivities ...")
 	tmp <- areaCountryBiotopeSalinityLayer
@@ -987,11 +1004,13 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Germany", "infra mix", "11-18",  "moderate",     "low",
 		"Germany", "infra mix", "18-30",  "moderate",     "high",
 
+		"Germany", "infra mud", "< 5",    "moderate",     "moderate", # analogue to 5-7.5 psu in this group
 		"Germany", "infra mud", "5-7.5",  "moderate",     "moderate",
 		"Germany", "infra mud", "7.5-11", "moderate",     "moderate",
 		"Germany", "infra mud", "11-18",  "moderate",     "moderate",
 		"Germany", "infra mud", "18-30",  "moderate",     "high",
 
+		"Germany", "infra sand", "< 5",    "moderate",    "moderate", # analogue to 5-7.5 psu in this group
 		"Germany", "infra sand", "5-7.5",  "moderate",    "moderate",
 		"Germany", "infra sand", "7.5-11", "moderate",    "moderate",
 		"Germany", "infra sand", "11-18",  "moderate",    "high",
@@ -1212,6 +1231,20 @@ if (! use_pre_calculated_data && do_cumi) {
 		#
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
+			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
+			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # miss-spelling
+			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
+			bio == "Schlickböden des Circalitorals" ~ "circa mud",
+			bio == "Sandböden des Circalitorals" ~ "circa sand",
+
+			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
+			bio == "Grobsedimente des Infralitorals" ~ "infra hard",
+			bio == "Mischsedimente des Infralitorals" ~ "infra mix",
+			bio == "Schlickböden des Infralitorals" ~ "infra mud",
+			bio == "Sandböden des Infralitorals" ~ "infra sand",
+			bio == "Felsen und biogene Riffe des Infralitorals" ~ "infra hard",
+			
+			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Circalittoral coarse sediment" ~ "circa hard",
 			bio == "Circalittoral mixed sediment" ~ "circa mix",
 			bio == "Circalittoral mud" ~ "circa mud",
@@ -1231,6 +1264,8 @@ if (! use_pre_calculated_data && do_cumi) {
 			bio == "Offshore circalittoral mud or Offshore circalittoral sand" ~ "???",
 			bio == "Offshore circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Offshore circalittoral sand" ~ "circa sand",
+			
+			bio == "NA" ~ "???",
 
 			TRUE ~ "other"
 		)
@@ -1246,7 +1281,8 @@ if (! use_pre_calculated_data && do_cumi) {
 				tmp$s_surf[i] <- "moderate"
 			} else if (shortName == "???") {
 				# if the biotope is either of two possibilities,
-				# precautionarily take the one leading to higher sensitivity:
+				# precautionarily take the one leading to higher sensitivity
+				# (this applies to the EUSeapMap which sometimes assigns two habitats at the same time):
 				zone <- substr(str_to_lower(word(bio,1)),1,5)
 				if (zone == "offsh") {zone <- "circa"}
 				s1a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$sens
@@ -1313,7 +1349,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	# in order to prevent errors in later spatial operations
 	biotopeLayer <- tmp %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
 	# as a last step write the layer to a file:
-	st_write(biotopeLayer,file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg"))
+	st_write(biotopeLayer,file.path(myDir,paste("Biotopes/biotopes-pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
 }
 ```
 
@@ -1330,7 +1366,7 @@ The (pre-calculated) biotope layer now has these attribute columns:
 - Sal = bottom salinity class
 - Sal2 = bottom salinity value range
 
-```{r}
+```{r prep1}
 if (use_pre_calculated_data && do_cumi) {
 	cumi_message("loading biotope layer ...")
 	biotope_file <- file.path(myDir,"Biotopes/biotopes-pre_calculated.gpkg")
@@ -1341,7 +1377,7 @@ if (use_pre_calculated_data && do_cumi) {
 
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
-```{r}
+```{r prep2}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("... making clipLayer ... st_union() ...")
 	clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
@@ -1352,9 +1388,9 @@ Note: this only applies when doing an actual CumI calculation. When the script i
 
 If the pressure maps are to be stored, we here set up the file for storain the MOP layers:
 
-```{r}
+```{r prep3}
 if (store_pressure_maps) {
-	pressure_maps_file <- file.path(myDir,paste("Results/CumI-pressure-maps-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= ""))
+	pressure_maps_file <- file.path(myDir,paste("Results/CumI-pressure-maps-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= ""))
 }
 ```
 
@@ -1363,7 +1399,7 @@ The initial impact map is just the biotope layer. This impact map gets combined 
 
 The assessment period of the test runs was 2011–2016, the period for the current HOLAS III assessment done here is 2016–2021:
 
-```{r}
+```{r prep4}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("preparing impact layer ...")
 	# initial impact layer is just the biotope map:
@@ -1437,7 +1473,7 @@ The confidence is rated as 'd3t3s1' for all countries except Russia which is rat
 - temporal coverage is rated 3 (no year missing)
 - spatial coverage is rated 0 for Russia (assumed from how the data look like) and 1 otherwise
 
-```{r}
+```{r bottomTrawling}
 if (use_pre_calculated_data) {
 	cumi_message("... using pre_calculated data ...")
 
@@ -1554,7 +1590,7 @@ if (use_pre_calculated_data) {
 		impact_map$confidence_1[impact_map$Territory != "Russia"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 != "none"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 == "none"] <- "d0t0s0"
-		st_write(impact_map,file.path(myDir,"Fishery/fishery_pre_calculated.gpkg"))
+		st_write(impact_map,file.path(myDir,paste("Fishery/fishery_pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
 	}
 }
 
@@ -2094,7 +2130,7 @@ The confidence is rated 'd3t3s1':
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
 
-```{r}
+```{r shipping}
 cumi_message("processing shipping ...")
 
 ship_folder <- file.path(myDir,"shipping")
@@ -2200,7 +2236,7 @@ if (do_cumi) {cumi_message("Cumulating all impacts ...")}
 Now, all individual impacts are calculated and integrated into the biotope map. So, we can now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon and then do a pair-wise combination:
 
 
-```{r}
+```{r do_cumulation}
 if (do_cumi) {
 	#
 	# the following code is explicit and thus slow (approx. 40 minutes on my machine), will be speed-optimized later
@@ -2232,7 +2268,7 @@ if (do_cumi) {
 
 As the last step, cumulative disturbance and loss are separated. The CumI does only evaluated disturbance. The loss layer can be used for e.g. MSFD criterion D6C4.
 
-```{r}
+```{r split_data}
 if (do_cumi) {
 	impact_map_loss <- impact_map %>% filter(cumi == 'loss')
 	impact_map_disturbance <- impact_map %>% filter(! cumi == 'loss')
@@ -2242,19 +2278,19 @@ if (do_cumi) {
 
 
 
-```{r}
+```{r finish_save_data}
 n2 <- Sys.time()
 cumi_message("Finished assesment!")
 print(n2)
 print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
 if (do_cumi) {
-	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
-	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	st_write(impact_map_disturbance,file.path(myDir,paste("Results/CumI-assessment-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep="")))
+	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep="")))
 
 	# a complete file including the area of the polygons, loss and disturbance could be this:
 	# impact_map <- impact_map %>% mutate(area = st_area(impact_map))
-	# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
+	# st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 }
 ```
 
