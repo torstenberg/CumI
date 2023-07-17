@@ -1,7 +1,7 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2023-03-24
+date: 2023-03-31
 output: html_document
 editor_options:
   chunk_output_type: console
@@ -40,8 +40,12 @@ Set the directory of the data folder in the following code chunk.
 
 ```{r setup}
 # --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
-myDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
+myDir <- "/Users/Torsten/Marilim/BLANO-MSRL/GIS/CumI"
+myHELCOMDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
+myGeneralDir <- "/Users/Torsten/Marilim/GIS"
 ```
+
+***NOTE:*** This documentation was done for the whole Baltic dataset. Thus, the confidecne rating and most of the text description do not apply to the national German MSFD assessment that is being done in this version !!!
 
 # R packages to use
 The R code uses the following libraries which should be installed first (if not present):
@@ -165,7 +169,8 @@ my_union <- function(a,b) {
 		"native:union",
 		INPUT = a,
 		OVERLAY = b,
-		OVERLAY_FIELDS_PREFIX = '')
+		OVERLAY_FIELDS_PREFIX = '',
+		.quiet = FALSE)
 	# read the resulting union, get rid of the produced "fid_" columns and make sure the geometry column is correctly named:
 	result <- sf::read_sf(qgis_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
 	# sometimes, the union results in some MULTILINESTRINGS - we must delete those:
@@ -285,11 +290,11 @@ The third rule combines biotope sensitivity and the physical magnitude of pressu
 
 ```{r cumi_impact_matrix}
 cumi_impact_matrix <- tribble(
-	~sensitivity, ~MOP_high, ~MOP_moderate, ~MOP_low,	~MOP_verylow,
-	"high",		 "high",	 "high",		  "m2",		 "m1",
-	"moderate",	"high",	 "m3",			 "m1",		 "low",
-	"low",		  "m2",		"m1",			 "low",		"very low",
-	"very low",	"m1",		"low",			"very low", "very low"
+	~sensitivity, ~MOP_loss, ~MOP_high, ~MOP_moderate, ~MOP_low,    ~MOP_verylow,
+	"high",       "loss",    "high",    "high",        "m2",        "m1",
+	"moderate",   "loss",    "high",    "m3",          "m1",        "low",
+	"low",        "loss",    "m2",      "m1",          "low",       "very low",
+	"very low",   "loss",    "m1",      "low",         "very low",  "very low"
 )
 
 
@@ -393,7 +398,8 @@ cumi_buffers <- tribble(
 	"coastalDef C", "coastal defence",             0,				 50,			  100,				  250,			  500,					 0,
 	"coastalDef O", "coastal defense",            50,				 50,			   50,				   50,			   50,					 0,
 	"mariculture",  "mariculture",               150,				150,			  400,				  650,			 1150,					 1,
-	"harbour O",	"harbour",                   200,				  0,			    0,				    0,			    0,					 0
+	"harbour O",	"harbour",                   200,				  0,			    0,				    0,			    0,					 0,
+	"groyne",		"groyne HyMo buffer",          0.5,				  5,			    5,				    5,			    5,					 1
 )
 
 ```
@@ -425,7 +431,8 @@ cumi_buffers_de <- tribble(
 	"coastalDef C", "coastal defence",                0,				 50,			  100,				  250,			  500,					 0,
 	"coastalDef O", "coastal defense",               50,				 50,			   50,				   50,			   50,					 1,
 	"*mariculture",  "mariculture",                   0,				  0,			    0,				  125,			  500,					 0,
-	"harbour O",	"harbour",                       200,				  0,			    0,				    0,			    0,					 1
+	"harbour O",	"harbour",                       200,				  0,			    0,				    0,			    0,					 1,
+	"groyne",		"groyne",                          0.5,				  5,			    5,				    5,			    5,					 1
 
 )
 ```
@@ -572,6 +579,43 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 		return(intensity_layer)
 	}
 }
+
+cumi_process_pressure_no_buffering <- function(pressureData,pressureType,suffix,MOP) {
+	#
+	# do NOT apply a buffer model to a GIS layer with pressures,
+	# but combine with partial impact layer directly
+	# applying 'high' impact
+	#
+	# *** ONLY USED FOR GERMAN DATA DIRECLTY DELIVERED and PREPROCESSED By HyMo GRPUP ***
+	#
+	# pressureData - sf layer with pressure data
+	# pressureType - layer type from tribble `cumi_buffers`, column ~pressure
+	# suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
+	# MOP = pressure intensity to apply (or "loss")
+	#
+	# This function for now treats intensity as MOP, as we do not have frequceny data  yet
+	#
+	# The function uses the global `impact_map` sf layer to add the pressure
+	# Therefor, the output of this function should be assigned to `imapct_map` again
+	#
+	#
+	intensity_layer <- pressureData %>% mutate(intensity=MOP) %>% rename_geometry("geometry")
+	if (store_pressure_maps) {
+		st_write(dplyr::rename(intensity_layer,MOP = intensity), pressure_maps_file, layer=paste("mop_",suffix,sep=""))
+	}
+	if (do_cumi) {
+		column <- paste("impact_",suffix,sep="")
+		cumi_message("... unioning ...")
+		result <- st_cast(impact_map,"MULTIPOLYGON") %>%
+			my_union(intensity_layer) %>%
+			dplyr::mutate( {{ column }} := unname(mapply(cumi_get_impact,intensity,sens))) %>%
+			dplyr::select(-intensity) %>% filter(! is.na(Biotope))
+		cumi_message("Done!")
+		return(result)
+	} else {
+		return(intensity_layer)
+	}
+}
 ```
 
 
@@ -657,16 +701,16 @@ cumi_skip_species <- FALSE
 The files produces by this script have specific names. You can add a suffix to these names when you want to distinguish several scenarios. The suffix will be inserted into the file just before the date/time portion if there is one, otherwise it will be inserted at the end:
 
 ```{r cumi_file_suffix}
-#cumi_file_suffix <- "DE"
+cumi_file_suffix <- "DE"
 #cumi_file_suffix <- "EUSeaMap-DE"
-cumi_file_suffix <- "HOLAS3"
+#cumi_file_suffix <- "HOLAS3"
 ```
 
 
 ## The assessment area
 The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
 
-```{r assessmentArea}
+```{r assessmentArea eval=FALSE}
 if (! use_pre_calculated_data) {
 	cumi_message("preparing assessment area layer ...")
 	area_file <- file.path(myDir,"Base/HELCOM_subbasins_2022.shp")
@@ -682,7 +726,7 @@ if (! do_cumi && store_pressure_maps) {
 
 To enable assigning data to specific countries, the assessment area is supplemented with country information. The countries are taken from the *EMODnet Human Activities* data file `Emodnet_HA_OtherManagementsAreas_EEZ_20180629`. As the spatial coverage of the country data sometimes is smaller than the coverage of the assessment area, the country area was extended manually on the terrestrial side so the complete assessment area is within a specific country.
 
-```{r countries}
+```{r countries eval=FALSE}
 # TODO: update available: EMODnet_HA_OtherManagementAreas_EEZ_v11_20210506
 # <https://www.emodnet-humanactivities.eu/search-results.php?dataname=Exclusive+Economic+Zone>
 if (! use_pre_calculated_data && do_cumi) {
@@ -695,12 +739,12 @@ if (! use_pre_calculated_data && do_cumi) {
 
 
 ## The biotope map
-The biotope map is based on the *EMODnet broad-scale seabed habitat map for Europe* (= EUSeapMap), dated September 2021.
+The biotope map is based on the *German BHT map*, dated March 2023.
 
 ### Biotope, country and assessment area data
 In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
 
-```{r biotopeMap}
+```{r biotopeMap eval=FALSE}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("starting with biotopes ...")
 	biotopeBaltic_file <- file.path(myDir,"Biotopes/EUSeaMap 2021 Baltic_Sea GDB/C20211007_EUSeaMap_2021_Baltic_Sea.gdb")
@@ -744,6 +788,16 @@ if (! use_pre_calculated_data && do_cumi) {
 }
 ```
 
+```{r biotopeMapDE}
+areaCountryBiotopeLayer <- st_read(file.path(myGeneralDir,"MSRL/Benthische Lebensräume/BHT-OHT-2023.gpkg")) %>%
+	filter(GEBIET == "Ostsee") %>%
+	rename(Biotope = BHT) %>%
+	select(-c(ADMIN,OBJECTID,ID_ORIGIN,NAME,GEBIET,MARIN,SUBREGION,HELCOM_ID,MRU,WRRL_WK,BHT_EN,OHT,OHT_EN,LRT,LRT_EN,BHT_EN_1,localId,namespace,versionId,thematicId,nameTxtInt,nameText_1,nameTxtLan,desigBegin,desigEnd,ImReportVe,Area_ha,AREA_qkm,Shape_Length,Shape_Area)) %>%
+	mutate(Territory = 'Germany') %>%
+	group_by(Biotope)
+
+```
+
 ### Species data
 Some taxa inhabiting specific areas lead to a 'high' sensitivity towards the pressures in the later process. The spatial data for these taxa is taken from HELCOM MADS (Biodiversity > Ecosystem components (BSII) > Benthic species). The taxa are the genera *Mytilus, Zostera, Furcellaria, Fucus, Chara*. We include this information into the biotope map in a new column 'sens_spec':
 
@@ -752,7 +806,7 @@ Some taxa inhabiting specific areas lead to a 'high' sensitivity towards the pre
 if (! use_pre_calculated_data && do_cumi) {
   cumi_message("including information on sensitive species ...")
   
-  species_folder <- file.path(myDir,"Biotopes/Benthic species HOLAS 3")
+  species_folder <- file.path(myHELCOMDir,"Biotopes/Benthic species HOLAS 3")
   
   # this new column will hold all the species information later:
   areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>% mutate(sens_spec = 'none')
@@ -783,7 +837,7 @@ if (! use_pre_calculated_data && do_cumi) {
       mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
       # for Zostera, ignore any vegetation below 10m depth:
       if (myName == "Zostera") {
-        depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
+        depths <- rast(file.path(myHELCOMDir,"Base/depth/w001001.adf"))
         tmp <- terra::extract(depths,mydata_poly, 'mean')
         sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
       } else  {
@@ -810,7 +864,7 @@ Now, we have an initial biotope layer with the corresponding information on subb
 ```{r salinityData}
 if (! use_pre_calculated_data && do_cumi) {
 		cumi_message("integrating salinity data ...")
-	salinity_file <- file.path(myDir,"../Data-2022/Salinity/BALANCE_BOTTOM_SALINITY.tif")
+	salinity_file <- file.path(myHELCOMDir,"../Data-2022/Salinity/BALANCE_BOTTOM_SALINITY.tif")
 	salinityLayer <- rast(salinity_file)
 	# convert to vector data:
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
@@ -1231,7 +1285,6 @@ if (! use_pre_calculated_data && do_cumi) {
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
-			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # miss-spelling
 			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
 			bio == "Schlickböden des Circalitorals" ~ "circa mud",
 			bio == "Sandböden des Circalitorals" ~ "circa sand",
@@ -1274,7 +1327,7 @@ if (! use_pre_calculated_data && do_cumi) {
 			tmp$sens[i] <- "high"
 			tmp$s_surf[i] <- "high"
 		} else {
-			if (bio == "Na" | is.na(sal)) {
+			if (bio == "Na" | bio == "NA" | is.na(sal)) {
 				# when sensitivity cannot be determine due to lack of data, use "moderate":
 				tmp$sens[i] <- "moderate"
 				tmp$s_surf[i] <- "moderate"
@@ -1360,7 +1413,6 @@ The (pre-calculated) biotope layer now has these attribute columns:
 - s_surf = sensitivity against surface abrasion due to bottom trawling
 - sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
 - level_2 = HELCOM subbasins
-- HELCOM_ID = the ID of the HELCOM subbasin
 - Territory = country name
 - Sal = bottom salinity class
 - Sal2 = bottom salinity value range
@@ -1376,7 +1428,7 @@ if (use_pre_calculated_data && do_cumi) {
 
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
-```{r prep2}
+```{r prep2 eval=FALSE}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("... making clipLayer ... st_union() ...")
 	clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
@@ -1486,9 +1538,9 @@ if (use_pre_calculated_data) {
 	cumi_message("... prepare to calculate fishery impact ...")
 	# the following file `file.path(myDir,"Fishery/fishery_surface.shp")` contains
 	# the raw data before aggregation as compiled from the individual ICES data files
-	fishing_file <- file.path(myDir,"Fishery/fishery_surface.shp")
+	fishing_file <- file.path(myHELCOMDir,"Fishery/fishery_surface.shp")
 	if (do_cumi) {
-	  # the two commented lines below (starting with ##) should only be used when the pressure layer is much larger
+	  # the commented lines should only be used when the pressure layer is much larger
 	  # than the biotope layer. Otherwise, this step takes just too long and the polygons
 	  # outside the biotope boundary are removed in a later step anyway:
 	  ##cumi_message("... intersection with clipLayer ...")
@@ -1614,7 +1666,7 @@ The confidence is rated 'd2t3s1':
 
 ```{r}
 cumi_message("... finfish ...")
-mari_1_file <- file.path(myDir,"Finfish mariculture/Finfish_PLC.shp")
+mari_1_file <- file.path(myHELCOMDir,"Finfish mariculture/Finfish_PLC.shp")
 mari_1 <- st_read(mari_1_file) %>% dplyr::select(geometry)
 
 if (do_cumi || store_pressure_maps) {
@@ -1641,7 +1693,7 @@ The confidence is rated 'd2t0s1':
 
 ```{r}
 cumi_message("... shellfish (points) ...")
-mari_2_file <- file.path(myDir,"Shellfish mariculture/Aquaculture_Shellfish_EMODnets.shp")
+mari_2_file <- file.path(myHELCOMDir,"Shellfish mariculture/Aquaculture_Shellfish_EMODnets.shp")
 mari_2 <- st_read(mari_2_file) %>% dplyr::select(geometry)
 
 if (do_cumi || store_pressure_maps) {
@@ -1686,7 +1738,7 @@ The confidence is rated 'd1t1s1' for Estonia, Finland, Germany and Russia and 'd
 
 ```{r}
 cumi_message("... extraction of sand and gravel ...")
-extraction_file <- file.path(myDir,"Extraction of sand and gravel/Extraction.shp")
+extraction_file <- file.path(myHELCOMDir,"Extraction of sand and gravel/Extraction.shp")
 extraction_x <- st_read(extraction_file) %>% st_zm()
 
 if (do_cumi || store_pressure_maps) {
@@ -1717,12 +1769,14 @@ The confidence is rated 'd1t3s1':
 
 ```{r}
 cumi_message("... deposit of dredged material (areas) ...")
-deposit_1_file <- file.path(myDir,"depositing of dredged material/depositing_polygons.shp")
-deposit_1 <- st_read(deposit_1_file) %>% dplyr::select(geometry)
+# the DE data are nealry identical to HELCOM dataset `file.path(myHELCOMDir,"depositing of dredged material/depositing_polygons.shp")`
+# however, the DE data are buffered already and denote disturbance in the 'high' category
+deposit_1_file <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/PhysicalDisturbance_UmlagerungUnterhaltung_LAEA.shp")
+deposit_1 <- st_read(deposit_1_file)
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(deposit_1,"depositing","3B")
+	impact_map <- cumi_process_pressure_no_buffering(deposit_1,"depositing","3B","high")
 }
 if (do_cumi) {
 	# confidence:
@@ -1744,7 +1798,8 @@ The confidence is rated 'd1t3s1':
 
 
 
-```{r}
+```{r eval=FALSE}
+### mostly overlaps with DE-HyMo data, this skipping:
 cumi_message("... deposit of dredged material (points) ...")
 deposit_2_file <- file.path(myDir,"depositing of dredged material/depositing_points.shp")
 deposit_2 <- st_read(deposit_2_file) %>% dplyr::select(geometry)
@@ -1769,7 +1824,8 @@ The confidence is rated 'd1t0s1':
 - spatial coverage is rated 1 (assumed taht all countries have provided data)
 
 
-```{r}
+```{r eval=FALSE}
+### only cables to OWF, skipping here as they are not contained in DE HyMo dataset:
 deposit_3_file <- file.path(myDir,"depositing of dredged material/depositing_lines.shp")
 deposit_3 <- st_read(deposit_3_file) %>% dplyr::select(geometry)
 
@@ -1794,7 +1850,8 @@ The confidence is rated 'd1t0s1':
 - temporal coverage is rated 0 (as temporal information is not yet used)
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
-```{r}
+```{r eval=FALSE}
+### seems to be covered by DE HayMo dataset, skipping
 dredge_a_file <- file.path(myDir,"dredging/Dredging_areas.shp")
 dredge_1 <- st_read(dredge_a_file) %>% st_zm()
 
@@ -1832,7 +1889,7 @@ The confidence is rated 'd1t0s1':
 
 
 ```{r}
-dredge_p_file <- file.path(myDir,"dredging/Dredging_points.shp")
+dredge_p_file <- file.path(myHELCOMDir,"dredging/Dredging_points.shp")
 dredge_3 <- st_read(dredge_p_file) %>% st_zm()
 
 cumi_message("... maintenance dredging (points) ...")
@@ -1876,7 +1933,8 @@ The confidence is rated 'd1t0s1':
 - temporal coverage is rated 0 (as temporal information is not yet used)
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
-```{r}
+```{r eval=FALSE}
+### skipping here, as Germany has the HyMo dataset
 dredge_l_file <- file.path(myDir,"dredging/Dredging_lines.shp")
 
 dredge_l <- st_read(dredge_l_file) %>% st_zm()
@@ -1923,22 +1981,25 @@ The confidence is rated 'd1t0s1':
 
 
 ```{r}
-cumi_message("... pipelines under construction (areas) ...")
-pipeline_file1 <- file.path(myDir,"Pipelines/Pipelines_polygons.shp")
+cumi_message("... pipelines (areas) ...")
+pipeline_file1 <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/Nordstream_1_2_LAEA_Deutschland.shp")
 
-# pipelines under construction:
+
 pipeline_c <- st_read(pipeline_file1) %>% st_zm() %>%	dplyr::select(geometry)
 
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply
-	impact_map <- cumi_process_pressure(pipeline_c,"pipeline C","4A")
+	impact_map <- cumi_process_pressure_no_buffering(pipeline_c,"pipeline C","4A","loss")
 }
 
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_4A = "d1t0s1")
 }
+```
 
+```{r eval=FALSE}
+### no additional data in the HyMo DE dataset
 cumi_message("... pipelines, operational (lines) ...")
 pipeline_2 <- file.path(myDir,"Pipelines/PIPELINE_append.shp")
 
@@ -1965,12 +2026,10 @@ The confidence is rated 'd1t0s1':
 
 
 ```{r}
-cumi_message("... cables (lines) ...")
+cumi_message("... cables ...")
 
-cable_file <- file.path(myDir,"Cables/Cables.shp")
-cable_oc <- st_read(cable_file) %>%
-	st_zm() %>%
-	st_cast("LINESTRING")
+cable_file <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/Kabel_2016_2021_LAEA.shp")
+cable_oc <- st_read(cable_file)
 
 
 # In this case, MOP is the same as intensity as frequency does not apply:
@@ -1992,23 +2051,27 @@ cable_oc <- st_read(cable_file) %>%
 #	st_make_valid() %>%
 #	st_cast("MULTIPOLYGON")
 
-cumi_message("... operational cables ...")
+cumi_message("... cables ...")
 if (do_cumi || store_pressure_maps) {
-	impact_map <- cumi_process_pressure(filter(cable_oc,Status == "Operational"),"cable O","4C")
+	impact_map <- cumi_process_pressure_no_buffering(filter(cable_oc),"cable O","4C","high")
 }
 if (do_cumi) {
 	# confidence:
 	impact_map <- impact_map %>% mutate(confidence_4C = "d1t0s1")
 }
 
-cumi_message("... cables under construction ...")
+cable_file2 <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/PiV_Ostsee.shp")
+cable_oc2 <- st_read(cable_file2)
+
+cumi_message("... cables 2 ...")
 if (do_cumi || store_pressure_maps) {
-	impact_map <- cumi_process_pressure(filter(cable_oc,Status == "Under construction"),"cable C","4D")
+	impact_map <- cumi_process_pressure_no_buffering(filter(cable_oc),"cable O","4D","high")
 }
 if (do_cumi) {
 	# confidence:
 	impact_map <- impact_map %>% mutate(confidence_4D = "d1t0s1")
 }
+
 
 ```
 
@@ -2029,25 +2092,40 @@ The confidence is rated 'd1t0s1':
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
 ```{r}
-cumi_message("... wind farms in operation ...")
-# the file only seems to contains turbines, at least there is no information on transformer platforms included:
-wind_file <- file.path(myDir,"Wind turbines and platforms/wind_offshore.shp")
+cumi_message("... wind farms and platforms ...")
+wind_file <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/PlattformenUndWindkraftanlagen_LAEA.shp")
 wind_x <- st_read(wind_file)
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(wind_x,! Foundation == "monopile" | is.na(Foundation)),"OWF O","5A")
+	impact_map <- cumi_process_pressure_no_buffering(wind_x,"OWF O","5A","loss")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_5A = "d1t0s1")
 }
 
+cumi_message("... marine constructions - physical loss ...")
+constr1_file <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/PhysicalLossBauwerke_Ostsee_LAEA.shp")
+constr1 <- st_read(constr1_file)
+
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(wind_x,Foundation == "monopile"),"OWF O mono","5B")
+	impact_map <- cumi_process_pressure_no_buffering(constr1,"OWF O mono","5B","loss")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_5B = "d1t0s1")
+}
+
+cumi_message("... marine constructions - physical disturbance ...")
+constr2_file <- file.path(myDir,"../HyMo/Ostsee_LAEA_AbgabeD6/PhysicalDisturbanceBauwerke_Ostsee_LAEA.shp")
+constr2 <- st_read(constr2_file)
+
+if (do_cumi || store_pressure_maps) {
+	# In this case, MOP is the same as intensity as frequency does not apply:
+	impact_map <- cumi_process_pressure_no_buffering(constr2,"OWF O mono","5C","high")
+}
+if (do_cumi) {
+	impact_map <- impact_map %>% mutate(confidence_5C = "d1t0s1")
 }
 
 ```
@@ -2069,9 +2147,10 @@ The confidence is rated 'd1t0s1':
 - temporal coverage is rated 0 (as temporal information is not yet used)
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
-```{r}
+```{r eval=FALSE}
+## no HELCOM data in DE area
 # main polygon data, all operational:
-def_1_file <- file.path(myDir,"Coastal defence/CoastalDefense_polygons.shp")
+def_1_file <- file.path(myHELCOMDir,"Coastal defence/CoastalDefense_polygons.shp")
 def_1 <- st_read(def_1_file) %>% st_zm() %>% st_make_valid() %>% dplyr::select(geometry)
 
 cumi_message("... coastal protection in operation (areas) ...")
@@ -2083,16 +2162,18 @@ if (do_cumi || store_pressure_maps) {
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_6A = "d1t0s1")
 }
+```
 
+```{r}
 cumi_message("... coastal protection (lines) ...")
 
 # line data:
-def_2_file <- file.path(myDir, "Coastal defence/CoastalDefence_lines_APPEND.shp")
+def_2_file <- file.path(myHELCOMDir, "Coastal defence/CoastalDefence_lines_APPEND.shp")
 def_2 <- st_read(def_2_file)
 
 if (do_cumi || store_pressure_maps) {
 	# MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(def_2,Status == "under construction"),"coastalDef C","6B")
+	impact_map <- cumi_process_pressure(filter(def_2,Status == "under construction" & substr(Type,1,6) != "groyne"),"coastalDef C","6B")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_6B = "d1t0s1")
@@ -2100,12 +2181,25 @@ if (do_cumi) {
 
 if (do_cumi || store_pressure_maps) {
 	# MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(def_2,Status == "operational"),"coastalDef O","6C")
+	impact_map <- cumi_process_pressure(filter(def_2,Status == "operational" & substr(Type,1,6) != "groyne"),"coastalDef O","6C")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_6C = "d1t0s1")
 }
 
+# groynes treated specially as there is a HyMo buffer model for this:
+if (do_cumi || store_pressure_maps) {
+	# MOP is the same as intensity as frequency does not apply:
+	impact_map <- cumi_process_pressure(filter(def_2, substr(Type,1,6) == "groyne"),"groyne","6D")
+}
+if (do_cumi) {
+	impact_map <- impact_map %>% mutate(confidence_6D = "d1t0s1")
+}
+
+```
+
+```{r eval=FALSE}
+### no HELCOM data in DE area
 # point data, all 'operational':
 def_3_file <- file.path(myDir,"Coastal defence/CoastalDefense_points.shp")
 def_3 <- st_read(def_3_file) %>% dplyr::select(geometry)
@@ -2136,7 +2230,7 @@ The confidence is rated 'd3t3s1':
 ```{r shipping}
 cumi_message("processing shipping ...")
 
-ship_folder <- file.path(myDir,"shipping")
+ship_folder <- file.path(myHELCOMDir,"shipping")
 
 # note: I had to rename the file with the 2020 data since the filename was missing an 's'
 # compared to the files for the other years:
@@ -2157,7 +2251,7 @@ ship_vect <- filter(ship_vect, mean > 0) %>%
 	dplyr::rename(density = mean)
 
 # add in the average depth per polygon:
-depths <- rast(file.path(myDir,"Base/depth rasters/depth_1x1km.tif"))
+depths <- rast(file.path(myHELCOMDir,"Base/depth rasters/depth_1x1km.tif"))
 tmp <- terra::extract(depths,vect(ship_vect), 'mean')
 ship_vect <- cbind(ship_vect,tmp) %>% st_as_sf() %>% dplyr::rename(depth = depth_1x1km)
 
@@ -2292,7 +2386,7 @@ if (do_cumi) {
 	st_write(impact_map_loss,file.path(myDir,paste("Results/physical_functional-loss-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep="")))
 
 	# a complete file including the area of the polygons, loss and disturbance could be this:
-	impact_map <- impact_map %>% mutate(area = st_area(impact_map))
+impact_map <- impact_map %>% mutate(area = st_area(impact_map))
 st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",cumi_file_suffix,"-",format(Sys.time(),"%Y-%m-%dT%H%M"),".gpkg",sep= "")))
 }
 ```
