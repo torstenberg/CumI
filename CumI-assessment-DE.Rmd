@@ -1,7 +1,7 @@
 ---
 title: Assessment of the cumulative impact from physical pressures on benthic biotopes in the Baltic Sea using the CumI indicator
 author: Torsten Berg, MariLim
-date: 2023-03-31
+date: 2023-07-17
 output: html_document
 editor_options:
   chunk_output_type: console
@@ -789,12 +789,10 @@ if (! use_pre_calculated_data && do_cumi) {
 ```
 
 ```{r biotopeMapDE}
-areaCountryBiotopeLayer <- st_read(file.path(myGeneralDir,"MSRL/Benthische Lebensräume/BHT-OHT-2023.gpkg")) %>%
+areaCountryBiotopeLayer <- st_read(file.path(myGeneralDir,"MSRL/Benthische Lebensräume/MSFD_BHT_OHT_HUB/BHT-OHT-2023-07-18.gpkg"),"MSRL_BHT_OHT_160723") %>%
 	filter(GEBIET == "Ostsee") %>%
-	rename(Biotope = BHT) %>%
-	select(-c(ADMIN,OBJECTID,ID_ORIGIN,NAME,GEBIET,MARIN,SUBREGION,HELCOM_ID,MRU,WRRL_WK,BHT_EN,OHT,OHT_EN,LRT,LRT_EN,BHT_EN_1,localId,namespace,versionId,thematicId,nameTxtInt,nameText_1,nameTxtLan,desigBegin,desigEnd,ImReportVe,Area_ha,AREA_qkm,Shape_Length,Shape_Area)) %>%
-	mutate(Territory = 'Germany') %>%
-	group_by(Biotope)
+	select(-c(ADMIN,GEBIET,MARIN,SUBREGION,HELCOM_ID,MRU,OHT_en,BHT_EN,namespace,nameTxtInt,desigBegin,DataBasis,Sources)) %>%
+	mutate(Territory = 'Germany')
 
 ```
 
@@ -893,13 +891,14 @@ if (! use_pre_calculated_data && do_cumi) {
 
 	salinityLayer <- select(salinityLayer,-category)
 
-	# (this following is done with ArcGIS ... otherwise it takes too long:)
+	# (this following can be done here in the DE case and takes roughly an hour or three, but doing in in ArcGIS is quicker with roughly 20 minutes:)
 	areaCountryBiotopeSalinityLayer <- my_union(areaCountryBiotopeLayer,salinityLayer)
 	# Now some cleaning:
 	# 1. make sure it is valid
 	# 2. delete all polygons without biotope assignment (these are the ones from the salinity layer that lie beyond the biotope map)
 	# 3. only retain the attributes we want:
 	areaCountryBiotopeSalinityLayer <- areaCountryBiotopeSalinityLayer %>%
+	  st_zm() %>%
 		st_make_valid() %>%
 		filter(! is.na(Biotope)) %>%
 		select(-starts_with("FID")) %>%
@@ -1032,10 +1031,10 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Germany", "circa hard", "11-18",  "high",        "high",
 		"Germany", "circa hard", "18-30",  "high",        "high",
 
-		"Germany", "circa mix", "5-7.5",  "moderate",     "low", # s_surf assumed
-		"Germany", "circa mix", "7.5-11", "moderate",     "low",
-		"Germany", "circa mix", "11-18",  "moderate",     "high",
-		"Germany", "circa mix", "18-30",  "moderate",     "high",
+		"Germany", "circa mix", "5-7.5",  "high",     "high",
+		"Germany", "circa mix", "7.5-11", "high",     "high",
+		"Germany", "circa mix", "11-18",  "high",     "high",
+		"Germany", "circa mix", "18-30",  "high",     "high",
 
 		"Germany", "circa mud", "5-7.5",  "moderate",     "moderate", # s_surf assumed
 		"Germany", "circa mud", "7.5-11", "moderate",     "moderate",
@@ -1052,10 +1051,10 @@ if (! use_pre_calculated_data && do_cumi) {
 		"Germany", "infra hard", "11-18",  "high",        "high",
 		"Germany", "infra hard", "18-30",  "high",        "high",
 
-		"Germany", "infra mix", "5-7.5",  "moderate",     "moderate",
-		"Germany", "infra mix", "7.5-11", "moderate",     "low",
-		"Germany", "infra mix", "11-18",  "moderate",     "low",
-		"Germany", "infra mix", "18-30",  "moderate",     "high",
+		"Germany", "infra mix", "5-7.5",  "high",     "high",
+		"Germany", "infra mix", "7.5-11", "high",     "high",
+		"Germany", "infra mix", "11-18",  "high",     "high",
+		"Germany", "infra mix", "18-30",  "high",     "high",
 
 		"Germany", "infra mud", "< 5",    "moderate",     "moderate", # analogue to 5-7.5 psu in this group
 		"Germany", "infra mud", "5-7.5",  "moderate",     "moderate",
@@ -1285,13 +1284,17 @@ if (! use_pre_calculated_data && do_cumi) {
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
+			bio == "Grobsediment des Circalitorals" ~ "circa hard",
 			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
+			bio == "Mischsediment (Hartboden) des Circalitorals" ~ "circa mix",
 			bio == "Schlickböden des Circalitorals" ~ "circa mud",
 			bio == "Sandböden des Circalitorals" ~ "circa sand",
 
 			bio == "Infralittoral rock and biogenic reef" ~ "infra hard",
 			bio == "Grobsedimente des Infralitorals" ~ "infra hard",
+			bio == "Grobsediment des Infralitorals" ~ "infra hard",
 			bio == "Mischsedimente des Infralitorals" ~ "infra mix",
+			bio == "Mischsediment (Hartboden) des Infralitorals" ~ "infra mix",
 			bio == "Schlickböden des Infralitorals" ~ "infra mud",
 			bio == "Sandböden des Infralitorals" ~ "infra sand",
 			bio == "Felsen und biogene Riffe des Infralitorals" ~ "infra hard",
@@ -2307,7 +2310,9 @@ if (store_pressure_maps) {
 }
 
 if (do_cumi) {
-	# the union in the following statement took roughly 30 hours on my machine using the QGIS function, on ArcGIS the union fails with an unspecific error:
+	# the union in the following statement took roughly 30 hours on my machine using the QGIS function,
+  # for the DE case it runs approx. 9-10 hours,
+  # on ArcGIS the union fails with an unspecific error:
 	impact_map <- st_cast(impact_map,"MULTIPOLYGON") %>%
 		my_union(ship_vect) %>%
 		dplyr::mutate(impact_7 = unname(mapply(cumi_get_impact,MOP,sens))) %>%
