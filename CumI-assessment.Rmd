@@ -389,7 +389,7 @@ cumi_buffers <- tribble(
 	"platform O",	"platforms",                  25,				 25,			   25,				   25,			   25,					 0,
 	"OWF C",		"offshore wind farms",         0,				  0,			  550,				  600,			 1000,					 0,
 	"OWF O",		"offshore wind farms",        30,				 30,			   40,			       50,			  130,					 0,
-	"OWF O mono",	"offshore wind farms",        30,				 30,			   40,			       50,			  130,					 1,
+	"OWF O mono",	"offshore wind farms",        30,				 30,			   40,			       50,			  130,					 1, # the footprint_as_loss flag has no effect for point data
 	"coastalDef C", "coastal defence",             0,				 50,			  100,				  250,			  500,					 0,
 	"coastalDef O", "coastal defense",            50,				 50,			   50,				   50,			   50,					 0,
 	"mariculture",  "mariculture",               150,				150,			  400,				  650,			 1150,					 1,
@@ -2031,7 +2031,7 @@ if (do_cumi) {
 cumi_message("processing platforms and wind farms ...")
 ```
 
-These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss.
+These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss (using a radius of 30m, including a potential scour protection).
 
 The confidence is rated 'd1t0s1':
 
