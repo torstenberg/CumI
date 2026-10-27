@@ -39,7 +39,7 @@ At this time, the following data folders are provided [here](https://portal.helc
 Set the directory of the data folder in the following code chunk.
 
 ```{r setup}
-# --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
+# --> CHANGE THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
 myDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
 ```
 
@@ -67,7 +67,7 @@ print("--- CumI ---: defining some R functions ...")
 
 ## General GIS-related functions
 
-R has no function corresponding to a true union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code ist from [stackowerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
+R has no function corresponding to a true union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code is from [Stack Owerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
 
 ```{r plainUnion eval=FALSE}
 a1 <- st_polygon(list(rbind(c(0, 10), c(45, 10), c(45, 90), c(0, 90), c(0, 10))))
@@ -136,7 +136,7 @@ my_union_raster <- function(a,b,sf=TRUE) {
 	#
 	# a - the first sf or Spatial* object
 	# b - the second sf or Spatial* object
-	# sf - whehter or not to convert the output to an sf object
+	# sf - whether or not to convert the output to an sf object
 	#
 	# when an objects is not a Spatial* object, it will be converted first
 	#
@@ -357,9 +357,9 @@ cumi_get_cumulation <- function(i1,i2) {
 }
 ```
 
-Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. So, the number in a specific columns is always the radius of the outer border of a zone, not its width.
+Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. So, the number in a specific column is always the radius of the outer border of a zone, not its width.
 
-The table also lists whether there is a buffer zone counting as 'loss' (~buffer\_loss) and whether the pressure footprint itself (in case of polygone data) is treated as loss (~footprint\_as\_loss).
+The table also lists whether there is a buffer zone counting as 'loss' (~buffer\_loss) and whether the pressure footprint itself (in case of polygon data) is treated as loss (~footprint\_as\_loss).
 
 ```{r cumi_buffers}
 #
@@ -379,7 +379,7 @@ cumi_buffers <- tribble(
 	"depositing",	"deposit of dredged material", 0,				 50,			  100,				  250,			  500,					 0,
 	"dredging M",	"maintenance dredging",        0,				 50,			  100,				  250,			  500,					 0,
 	"dredging CAP", "capital, areas",              0,				  0,			    0,				    0,			    0,					 1,
-	"dredging CAP1","captial, points, <= 5000m3", 25,				 25,			   25,				   25,			   25,					 1,
+	"dredging CAP1","capital, points, <= 5000m3", 25,				 25,			   25,				   25,			   25,					 1,
 	"dredging CAP2","capital, points, > 5000m3",  50,				 50,			   50,				   50,			   50,					 1,
 	"cable C",		"cable",                       0,				  0,			  550,				  600,			 1000,					 0,
 	"cable O",		"cable",                       1.5,				1.5,			    1.5,			    1.5,		    1.5,				 0,
@@ -409,7 +409,7 @@ cumi_buffers_de <- tribble(
 	"depositing",	"deposit of dredged material",     0,				 50,			  100,				  250,			  500,					 0,
 	"dredging M",	"maintenance dredging",            0,				 50,			  100,				  250,			  500,					 0,
 	"dredging CAP", "capital  areas",                 0,				  0,			    0,				    0,			    0,					 1,
-	"dredging CAP1","captial  points  <= 5000m3",     25,				 25,			   25,				   25,			   25,					 1,
+	"dredging CAP1","capital  points  <= 5000m3",     25,				 25,			   25,				   25,			   25,					 1,
 	"dredging CAP2","capital  points  > 5000m3",     50,				 50,			   50,				   50,			   50,					 1,
 	"*cable Cs",	"cable <= 20m depth",              0,				  0.5,		    3,				   10,			  100,					 0,
 	"*cable Cd",	"cable > 20m depth",               0,				  0.5,		    3,				   10,			   50,					 0,
@@ -537,10 +537,10 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# pressureType - layer type from tribble `cumi_buffers`, column ~pressure
 	# suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
 	#
-	# This function for now treats intensity as MOP, as we do not have frequceny data  yet
+	# This function for now treats intensity as MOP, as we do not have frequency data  yet
 	#
 	# The function uses the global `impact_map` sf layer to add the pressure
-	# Therefor, the output of this function should be assigned to `imapct_map` again
+	# Therefor, the output of this function should be assigned to `impact_map` again
 	#
 	# Note 1: mapply() needed in mutate() function since mutate() operates on vectors and the cumi_get_impact() function not.
 	# Also, unname() needed in mutate() function since mapply() will return a named object and we only want the vector inside.
@@ -553,7 +553,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# Note 3: when storing pressure maps, we use the global configuration variable store_pressure_maps
 	# and the corresponding file already being initiated during processing
 	# of fishery pressure data; see below in the section for setting up the assessment.
-	# (This is not optimal modular programming, but it do for now)
+	# (This is not optimal modular programming, but it will do for now)
 	#
 	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
 	if (store_pressure_maps) {
@@ -581,7 +581,7 @@ Last, and not least, we want some regular feedback from the script, since some o
 ```{r get_running_time}
 get_running_time <- function(n1,n2) {
 	#
-	# return the difference between to Sys.time() values an minutes,
+	# return the difference between two Sys.time() values in minutes,
 	# nicely formatted
 	#
 	# n1, n2 - first and second Sys.time() values
@@ -609,7 +609,7 @@ cumi_message <- function(msg) {
 ## Setup
 Everything should be going on in the same coordinate system. So, we define this variable in order to be able to uniformly transform to this. It is the EPSG code for "ETRS89-extended / LAEA Europe" which is typically used by HELCOM for their maps. Further, we define here the list of years for which the assessment is done. Note: transforming of data to `coordSystem` is not done everywhere in the code, only when the currently used input data do not match. So, if you use other data you must modify the code to take care of the transformation yourself.
 
-Then, a variable is set which determined whether this script uses some pre-calculated files which otherwise would need a huge amount of comupting time to assemble.
+Then, a variable is set which determines whether this script uses some pre-calculated files which otherwise would need a huge amount of computing time to assemble.
 
 ```{r coordSystem}
 cumi_message("setting up the assessment ...")
@@ -636,7 +636,7 @@ The pressure maps that are produced by e.g. buffering or by intersecting intensi
 store_pressure_maps <- TRUE
 ```
 
-Normally, you want the CumI assessment to be done. But if you only want the pressure maps and not the actual CumI calculations (which will be much quicker in terms of processing time), i.e. not the overlay with biotoptes and sensitivity and the cumulation, then you can turn it off here:
+Normally, you want the CumI assessment to be done. But if you only want the pressure maps and not the actual CumI calculations (which will be much quicker in terms of processing time), i.e. not the overlay with biotopes and sensitivity and the cumulation, then you can turn it off here:
 
 ```{r do_cumi}
 do_cumi <- TRUE
@@ -654,7 +654,7 @@ Sometimes, it can be necessary to skip the step where the sensitivities are modi
 cumi_skip_species <- FALSE
 ```
 
-The files produces by this script have specific names. You can add a suffix to these names when you want to distinguish several scenarios. The suffix will be inserted into the file just before the date/time portion if there is one, otherwise it will be inserted at the end:
+The files produced by this script have specific names. You can add a suffix to these names when you want to distinguish several scenarios. The suffix will be inserted into the file just before the date/time portion if there is one, otherwise it will be inserted at the end:
 
 ```{r cumi_file_suffix}
 #cumi_file_suffix <- "DE"
@@ -664,7 +664,7 @@ cumi_file_suffix <- "HOLAS3"
 
 
 ## The assessment area
-The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
+The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltic Sea[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
 
 ```{r assessmentArea}
 if (! use_pre_calculated_data) {
@@ -686,7 +686,7 @@ To enable assigning data to specific countries, the assessment area is supplemen
 # TODO: update available: EMODnet_HA_OtherManagementAreas_EEZ_v11_20210506
 # <https://www.emodnet-humanactivities.eu/search-results.php?dataname=Exclusive+Economic+Zone>
 if (! use_pre_calculated_data && do_cumi) {
-	cumi_message("loading and suplementing country information ...")
+	cumi_message("loading and supplementing country information ...")
 	country_file <- file.path(myDir,"Base/countries.shp")
 	countryLayer <- st_read(country_file)
 	areaCountryLayer <- st_intersection(areaLayer,countryLayer)
@@ -695,10 +695,10 @@ if (! use_pre_calculated_data && do_cumi) {
 
 
 ## The biotope map
-The biotope map is based on the *EMODnet broad-scale seabed habitat map for Europe* (= EUSeapMap), dated September 2021.
+The biotope map is based on the *EMODnet broad-scale seabed habitat map for Europe* (= EUSeaMap), dated September 2021.
 
 ### Biotope, country and assessment area data
-In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version if the latter dataset is used where anything roughly outside the Kattegat area has been removed.
+In the first step, the original map for the Baltic Sea[^1] (dated September 2021) is used. As the Baltic part of the EUSeaMap does not include the Kattegat, part of the corresponding map for the European Atlantic and Arctic region[^2] is merged into the data (as long as it is within the assessment area). For convenience (as the Atlantic/Arctic dataset is huge) a manually clipped version of the latter dataset is used where anything roughly outside the Kattegat area has been removed.
 
 ```{r biotopeMap}
 if (! use_pre_calculated_data && do_cumi) {
@@ -714,7 +714,7 @@ if (! use_pre_calculated_data && do_cumi) {
 		rename(Biotope = MSFD_BBHT)
 	# the following file was produced from the original EMODnet geodatabase in QGIS (version 3.26.1) by
 	# 1. converting it to geopackage
-	# 2. buffering by 0 metres (thus repairing geomerty errors)
+	# 2. buffering by 0 metres (thus repairing geometry errors)
 	# 3. manually dividing objects around the Kattegat boundary
 	# 4. deleting all objects outside the Kattegat
 	biotopeKattegat_file <- file.path(myDir,"Biotopes/EUSeaMap_2021_Kattegat-v2.gpkg")
@@ -722,7 +722,7 @@ if (! use_pre_calculated_data && do_cumi) {
 		st_transform(coordSystem) %>%
 		st_cast("MULTIPOLYGON") %>%
 		st_make_valid() %>%
-		# onyl keep the BHT column and rename it to 'Biotope':
+		# only keep the BHT column and rename it to 'Biotope':
 		select(MSFD_BBHT) %>%
 		rename(Biotope = MSFD_BBHT)
 	# now merge the Baltic with the Kattegat
@@ -853,13 +853,13 @@ if (! use_pre_calculated_data && do_cumi) {
 }
 ```
 
-There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively be assigned a "moderate" sensitivity.
+There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively assigned a "moderate" sensitivity.
 
-### Sensitivity assingment
-In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same countr/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
+### Sensitivity assignment
+In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same country/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
 
 
-```{r assignSensitivites}
+```{r assignSensitivities}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("assign sensitivities ...")
 	tmp <- areaCountryBiotopeSalinityLayer
@@ -1231,7 +1231,7 @@ if (! use_pre_calculated_data && do_cumi) {
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
-			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # miss-spelling
+			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # misspelling
 			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
 			bio == "Schlickböden des Circalitorals" ~ "circa mud",
 			bio == "Sandböden des Circalitorals" ~ "circa sand",
@@ -1356,7 +1356,7 @@ if (! use_pre_calculated_data && do_cumi) {
 The (pre-calculated) biotope layer now has these attribute columns:
 
 - Biotope = HELCOM broadscale habitat
-- sens = general pressure-independant sensitivity
+- sens = general pressure-independent sensitivity
 - s_surf = sensitivity against surface abrasion due to bottom trawling
 - sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
 - level_2 = HELCOM subbasins
@@ -1385,7 +1385,7 @@ if (! use_pre_calculated_data && do_cumi) {
 
 Note: this only applies when doing an actual CumI calculation. When the script is set up to only produce pressure maps and not doing a CumI calculation, the pressure data will be clipped by the original assessment area layer.
 
-If the pressure maps are to be stored, we here set up the file for storain the MOP layers:
+If the pressure maps are to be stored, we here set up the file for storing the MOP layers:
 
 ```{r prep3}
 if (store_pressure_maps) {
@@ -1394,7 +1394,7 @@ if (store_pressure_maps) {
 ```
 
 ## Pressure data and impact calculation
-The initial impact map is just the biotope layer. This impact map gets combined (in principle via a GIS union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_nx' where n is a number corresponding to the pressure numbers/identifiers in the following secions and x is either 'A' or 'B' or subsequent characters of the alphabet denoting some partial layer of the pressure or it is missing for those pressures which are not divided into multiple pressure layers.
+The initial impact map is just the biotope layer. This impact map gets combined (in principle via a GIS union operation) with each processed pressure layer. With each new pressure, one new column is added named 'impact_nx' where n is a number corresponding to the pressure numbers/identifiers in the following sections and x is either 'A' or 'B' or subsequent characters of the alphabet denoting some partial layer of the pressure or it is missing for those pressures which are not divided into multiple pressure layers.
 
 The assessment period of the test runs was 2011–2016, the period for the current HOLAS III assessment done here is 2016–2021:
 
@@ -1409,16 +1409,16 @@ if (! use_pre_calculated_data && do_cumi) {
 The pressure data used here were provided by HELCOM as a result of a data call to the contracting parties. The following list is the description that followed the data package sent out to CumI lead by 2022-07-01:
 
 Cables
-: HOLAS 3 data for DK, FI and PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE and SE (flaged in the Notes). Complementation with HOLAS 2 data for RU, LV, LT (flaged in the Notes). Data still pending from CPs.
+: HOLAS 3 data for DK, FI and PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE and SE (flagged in the Notes). Complementation with HOLAS 2 data for RU, LV, LT (flagged in the Notes). Data still pending from CPs.
 
 Coastal defence and flood protection (under construction)
-: HOLAS 3 data for DE, DK, FI, PL, SE. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE (flaged in the Notes). Complementation with HOLAS 2 data for PL (flaged in the Notes). Please, observe that all 'Status' classifications from data providers were included.
+: HOLAS 3 data for DE, DK, FI, PL, SE. Data reported as not available for LV and LT. HOLAS 2 data use requested by EE (flagged in the Notes). Complementation with HOLAS 2 data for PL (flagged in the Notes). Please, observe that all 'Status' classifications from data providers were included.
 
 Deposit of dredged material (points and areas)
 : Includes a data extract of the database for the years 2016-2020. In the zip package there is one additional shapefile for depositing areas where the data is cross tabulated to have amount as columns. If the more detailed info on e.g. Material or capital/maintenance is needed, this is found in the database extract. Corrections and complementations from the revision still pending.
 
 Dredging (maintenance, points and areas)
-: Includes a data extract of the database for the years 2016-2020 and the data submitted for the data call. Data from CPs and corrections from revision still pending. One zip file contains an extract of the original data for maintanance dredging and the other zip file contains the merged 500m buffer from the extract.
+: Includes a data extract of the database for the years 2016-2020 and the data submitted for the data call. Data from CPs and corrections from revision still pending. One zip file contains an extract of the original data for maintenance dredging and the other zip file contains the merged 500m buffer from the extract.
 
 Extraction of sand and gravel
 : HOLAS 3 data for FI, EE and DE. Data reported as not available for LT. Data still pending from CPs. One zip file contains an extract of the original data and the other zip file contains the merged 500m buffer from the extract. There is also an excel table with reported data by Poland.
@@ -1433,7 +1433,7 @@ Furcellaria harvesting
 : Statistical data from EUROSTAT. Spatial data extracted from HOLAS 2 and possible updates confirmed with the country.
 
 Pipelines
-: HOLAS 3 data for DK, EE, FI, PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by SE (flaged in the Notes). Data complemented with HOLAS 2 data for RU (flaged in the Notes). Data still pending from CPs.
+: HOLAS 3 data for DK, EE, FI, PL. Data reported as not available for LV and LT. HOLAS 2 data use requested by SE (flagged in the Notes). Data complemented with HOLAS 2 data for RU (flagged in the Notes). Data still pending from CPs.
 
 Recreational boating and sports
 : Recreational boating and sports layer from HOLAS 2.
@@ -1448,7 +1448,7 @@ Wind farms (under construction)
 : No Status falling 'under construction' received for now in HOLAS 3 data call. Data still pending from CPs.
 
 Wind farms (operational)
-: HOLAS 3 data for DK and FI. Data reported as not available for PL and LT. HOLAS 2 data use requested by SE (flaged in the Notes). Data reported as not relevant for LV and EE. Data still pending from CPs.
+: HOLAS 3 data for DK and FI. Data reported as not available for PL and LT. HOLAS 2 data use requested by SE (flagged in the Notes). Data reported as not relevant for LV and EE. Data still pending from CPs.
 
 ### 1. Bottom trawling fishery
 
@@ -1674,7 +1674,7 @@ cumi_message("processing extraction and disposal of sediments ...")
 
 The following data layer is from HELCOM, reported by Estonia, Finland, Germany and Russia. The data are polygon data.
 
-Extraction depth and the spatial extent of the extraction within the polygon is unknown. Therefore, the complete polygon area is precautionarily treated as loss. All listed sites are assumed active (also when no amounts where given within the assessment period, i.e. all amounts are zero).
+Extraction depth and the spatial extent of the extraction within the polygon is unknown. Therefore, the complete polygon area is precautionarily treated as loss. All listed sites are assumed active (also when no amounts were given within the assessment period, i.e. all amounts are zero).
 
 Frequency could be evaluated from this dataset as the dataset has information on the yearly amount. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
@@ -1766,7 +1766,7 @@ The confidence is rated 'd1t0s1':
 
 - data quality is rated 1 as the reported deposition amount alone cannot be used (missing information on deposition height and areal extent within the deposition site)
 - temporal coverage is rated 0 (the data is assumed to only cover one-time events and no information is given for the other assessment years)
-- spatial coverage is rated 1 (assumed taht all countries have provided data)
+- spatial coverage is rated 1 (assumed that all countries have provided data)
 
 
 ```{r}
@@ -1822,11 +1822,11 @@ if (do_cumi) {
 
 ```
 
-The following dataset is point data labelled 'maintenance' and 'capital'. When the amount is given, it is used to dertmine the right buffering. If the amount is missing we precautionarily assume > 5000 m^3^. Most data do have information on the dredging amount.
+The following dataset is point data labelled 'maintenance' and 'capital'. When the amount is given, it is used to determine the right buffering. If the amount is missing we precautionarily assume > 5000 m^3^. Most data do have information on the dredging amount.
 
 The confidence is rated 'd1t0s1':
 
-- data quality is rated 1 as the reported dredging amount alone cannot be used (missing information on dredging depth and spatial extent within the dredging site) and most sites do no report the amount
+- data quality is rated 1 as the reported dredging amount alone cannot be used (missing information on dredging depth and spatial extent within the dredging site) and most sites do not report the amount
 - temporal coverage is rated 0 (as temporal information is not yet used and mostly not available)
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
@@ -1917,7 +1917,7 @@ The following data are polygon and line data. There is only one item in the poly
 
 The confidence is rated 'd1t0s1':
 
-- data quality is rated 1 as there are no quantitative data on trenches nd amounts
+- data quality is rated 1 as there are no quantitative data on trenches and amounts
 - temporal coverage is rated 0 (as temporal information is not yet used)
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
@@ -2020,7 +2020,7 @@ if (do_cumi) {
 cumi_message("processing platforms and wind farms ...")
 ```
 
-These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss.
+These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss.
 
 The confidence is rated 'd1t0s1':
 
@@ -2175,7 +2175,7 @@ ship_vect <- mutate(ship_vect, depthzone = case_when(
 
 # translate the density depending on the depthzone into a new attribute column ‘intensity’:
 # Weighted with depth:
-# dephtzone 1: equiv. to 100 % => density value is taken directly
+# depthzone 1: equiv. to 100 % => density value is taken directly
 # depthzone 2: equiv. to  50 % => density value divided by 2
 # depthzone 3: equiv. to  25 % => density value divided by 4
 # depthzone 4: equiv. to  10 % => density value divided by 10
@@ -2192,7 +2192,7 @@ ship_vect <- dplyr::mutate(ship_vect, intensity = case_when(
 
 # new attribute column 'MOP':
 # reclassify the intensity into the four MOP classes
-# (we ignore frequency at this stage, usinf the maverage density for now,
+# (we ignore frequency at this stage, using the average density for now,
 # but frequency can be included following the proposal below).
 #
 # After the above steps, intensity values from 0 to 32166 remain. These are divided pragmatically into the uniform CumI scale:
@@ -2269,7 +2269,7 @@ if (do_cumi) {
 }
 ```
 
-As the last step, cumulative disturbance and loss are separated. The CumI does only evaluated disturbance. The loss layer can be used for e.g. MSFD criterion D6C4.
+As the last step, cumulative disturbance and loss are separated. The CumI does only evaluate disturbance. The loss layer can be used for e.g. MSFD criterion D6C4.
 
 ```{r split_data}
 if (do_cumi) {
@@ -2283,7 +2283,7 @@ if (do_cumi) {
 
 ```{r finish_save_data}
 n2 <- Sys.time()
-cumi_message("Finished assesment!")
+cumi_message("Finished assessment!")
 print(n2)
 print(paste("Total assessment processing time:",get_running_time(n1,n2)))
 
@@ -2308,7 +2308,7 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 - Sal = bottom salinity class (from HELCOM BALANCE project)
 - Sal2 = bottom salinity value range (from HELCOM BALANCE project)
 - impact_xx = CumI impact category for the component specified by 'xx':
-- confidence_xx = CumI confidence rating for the component specified by xx':
+- confidence_xx = CumI confidence rating for the component specified by 'xx':
 	- 1: Bottom trawling fishery (surface abrasion), raster data
 	- 2A: Finfish mariculture, point data
 	- 2B: Shellfish mariculture, point data
@@ -2350,7 +2350,7 @@ The resulting CumI-assessment file has a number of columns now. This is what the
 ## Pressure frequency
 Frequency is currently not used in the assessment as there was no frequency information for the former dataset (years 2011-2016) and thus it could not be part of the CumI development and testing phase. To keep the current assessment as close as possible to the one agreed for HOLAS III, frequency is still left out although some of the current datasets do now carry information on pressure frequency.
 
-In the agreed CumI method, frequency is only determined on the basis of the number of pressure events per yes. However, this kind of information seems to represent a rare case. We much more often have frequency in terms of "in how many of the 6 assessment years did the pressure occur?". So, for this kind of data the frequency can be interpreted as:
+In the agreed CumI method, frequency is only determined on the basis of the number of pressure events per year. However, this kind of information seems to represent a rare case. We much more often have frequency in terms of "in how many of the 6 assessment years did the pressure occur?". So, for this kind of data the frequency can be interpreted as:
 
 * occasional = occurs in 1 (of 6) years
 * regular = occurs in 2-3 years
@@ -2365,7 +2365,7 @@ For the area for which pressure data are present, the confidence of the assessme
 
 When a pressure occurs but information is missing to assess it, the string will be 'd0t0s0'. This is the only case where all three categories are rated 0.
 
-When not data or information is present for a particular area and thus the MOP/impact cannot be determined, the string 'none' is used for the confidence.
+When no data or information is present for a particular area and thus the MOP/impact cannot be determined, the string 'none' is used for the confidence.
 
 With this notation, we can distinguish between the following situations:
 
@@ -2387,7 +2387,7 @@ This rating gives information about the nature of the supplied data. The higher 
 * 3. Quantitative data based on real measurements
 
 ## Temporal coverage
-All pressure data are supposed to cover the whole assessment period of six years. When a year ore more is missing in the dataset or no information on the temporal distribution of the pressure is available, the rating is lower.
+All pressure data are supposed to cover the whole assessment period of six years. When a year or more is missing in the dataset or no information on the temporal distribution of the pressure is available, the rating is lower.
 
 * 0. No information available on temporal coverage
 * 1. 1-2 years are covered within the assessment period of 6 years
@@ -2395,18 +2395,18 @@ All pressure data are supposed to cover the whole assessment period of six years
 * 3. 5-6 years
 
 ## Spatial coverage
-When a specific region or country does not report data and it is known that the pressure occurs in that area, this information can be documented here. It can be rated per pressure polygon but is typicall used country-wide.
+When a specific region or country does not report data and it is known that the pressure occurs in that area, this information can be documented here. It can be rated per pressure polygon but is typically used country-wide.
 
 * 0. No data present
 * 1. Data present
 
 
 # Outlook
-This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new dataset will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
+This version of the script is an initial version. It implements the basic features of the CumI that are needed in order to do a CumI assessment with the current HELCOM dataset. In the near future, new datasets will be available for HOLAS III. This will be the latest point where the script needs changes in order to work with the new or updated data (e.g. integrating pressure frequency for more pressures or a more differentiated approach to derive MOP).
 
 Apart from this, the following updates are planned for the next version:
 
-- some visualizations will be implemented on the resulting impact map, such as graphs on the aerial extent of the various impact levels over the whole assessment area or certain subdivisions of that area
+- some visualizations will be implemented on the resulting impact map, such as graphs on the areal extent of the various impact levels over the whole assessment area or certain subdivisions of that area
 - the pre-processing of the bottom trawling data and the shipping data will be implemented
 - the pre-processing of the biotope map
 - a distinction between 'no data' and 'no impact' will be implemented
