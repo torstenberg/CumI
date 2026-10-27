@@ -450,6 +450,10 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	m	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
 	h	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
 
+	if (length(h) != 1) {
+		stop(paste0("CumI: buffer model '",pressureBufferModel,"' not found (or found more than once) in function cumi_buffers"))
+	}
+
 	# is the polygon footprint itself treated as 'loss' (only applies to polygon data)?
 	footprint_is_loss <- footprint & (st_geometry_type(pressureData,by_geometry=FALSE) %in% c("POLYGON","MULTIPOLYGON"))
 
@@ -464,11 +468,12 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# 'low' zone:
 	if (l-m > 0) {
-		if (! exists("b_low")) {b_low <- st_buffer(pressureData,l)}
+		# (always use 'inherits=FALSE' to we do not match variables outside the local scope)
+		if (! exists("b_low", inherits = FALSE)) {b_low <- st_buffer(pressureData,l)}
 		b_moderate <- st_buffer(pressureData,m)
 		zone_low <- st_sf(st_difference(st_union(b_low),st_union(b_moderate))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="low") %>% rename_geometry("geometry")
-		if (exists("output")) {
+		if (exists("output", inherits = FALSE)) {
 		  output <- add_row(output,zone_low)
 		} else {
 		  output <- zone_low
@@ -477,11 +482,11 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# 'moderate' zone:
 	if (m-h > 0) {
-		if (! exists("b_moderate")) {b_moderate <- st_buffer(pressureData,m)}
-		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
+		if (! exists("b_moderate", inherits = FALSE)) {b_moderate <- st_buffer(pressureData,m)}
+		if (! exists("b_high", inherits = FALSE)) {b_high <- st_buffer(pressureData,h)}
 		zone_moderate <- st_sf(st_difference(st_union(b_moderate),st_union(b_high))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="moderate") %>% rename_geometry("geometry")
-		if (exists("output")) {
+		if (exists("output", inherits = FALSE)) {
 		  output <- add_row(output,zone_moderate)
 		} else {
 		  output <- zone_moderate
@@ -490,10 +495,10 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# 'high' zone:
 	if (h-loss > 0) {
-		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
+		if (! exists("b_high", inherits = FALSE)) {b_high <- st_buffer(pressureData,h)}
 		if (loss > 0 || footprint_is_loss) {
 		  # cut out the loss zone (for polygons with loss = 0, b_loss is the footprint itself):
-		  if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+		  if (! exists("b_loss", inherits = FALSE)) {b_loss <- st_buffer(pressureData,loss)}
 		  zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss)))
 		} else {
 		  # no loss zone at all: the high zone starts at the pressure source itself,
@@ -502,7 +507,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 		}
 		zone_high <- zone_high %>%
 		  st_cast("POLYGON") %>% mutate(intensity="high") %>% rename_geometry("geometry")
-		if (exists("output")) {
+		if (exists("output", inherits = FALSE)) {
 		  output <- add_row(output,zone_high)
 		} else {
 		  output <- zone_high
@@ -511,9 +516,9 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# 'loss' zone:
 	if (loss > 0) {
-		if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+		if (! exists("b_loss", inherits = FALSE)) {b_loss <- st_buffer(pressureData,loss)}
 		zone_loss <- st_union(b_loss) %>% st_sf() %>% st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
-		if (exists("output")) {
+		if (exists("output", inherits = FALSE)) {
 		  output <- add_row(output,zone_loss)
 		} else {
 		  output <- zone_loss
@@ -524,11 +529,17 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	if (footprint_is_loss) {
 		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
 			st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
-		if (exists("output")) {
+		if (exists("output", inherits = FALSE)) {
 		  output <- add_row(output,zone_footprint)
 		} else {
 		  output <- zone_footprint
 		}
+	}
+
+	# no-zone-at-all can happen for a model with all buffers = 0 applied to non-polygon data or for an empty input layer:
+	if (! exists("output", inherits = FALSE)) {
+		stop(paste0("CumI: no intensity zones created for buffer model '",pressureBufferModel,
+			"' (all buffers are 0 and the footprint is not applicable to the geometry type of the input)."))
 	}
 
 	return(output)
@@ -566,6 +577,14 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# of fishery pressure data; see below in the section for setting up the assessment.
 	# (This is not optimal modular programming, but it will do for now)
 	#
+	# Note 4: an empty pressure layer stops the script. Typically, this means a filter on the raw data
+	# (e.g. on 'Type' or 'Status') did not match any feature. Continuing would silently drop the pressure
+	# from the assessment while still reporting a confidence value for it.
+	#
+	if (nrow(pressureData) == 0) {
+		stop(paste0("CumI: pressure layer for ",pressureType," (impact_",suffix,") has 0 features. ",
+			"Either the filter on the input data is wrong or the pressure layer is empty."))
+	}
 	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
 	if (store_pressure_maps) {
 		st_write(dplyr::rename(intensity_layer,MOP = intensity), pressure_maps_file, layer=paste("mop_",suffix,sep=""))
