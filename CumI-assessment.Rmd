@@ -61,7 +61,7 @@ library(terra) # for species raster data
 
 # Some R functions
 
-```{r message include=FALSE}
+```{r message, include=FALSE}
 print("--- CumI ---: defining some R functions ...")
 ```
 
@@ -69,7 +69,7 @@ print("--- CumI ---: defining some R functions ...")
 
 R has no function corresponding to a true union in GIS. `st_union` in the sf library is not equivalent. Since we need lots of real union operations here, we need a custom function. The following code is from [Stack Owerflow](https://stackoverflow.com/questions/54710574/how-to-do-a-full-union-with-the-r-package-sf) and illustrates the process. It is the basis of our function:
 
-```{r plainUnion eval=FALSE}
+```{r plainUnion, eval=FALSE}
 a1 <- st_polygon(list(rbind(c(0, 10), c(45, 10), c(45, 90), c(0, 90), c(0, 10))))
 a2 <- st_polygon(list(rbind(c(45, 10), c(90,10), c(90, 90), c(45, 90), c(45, 10))))
 b1 <- st_polygon(list(rbind(c(15, 5), c(75, 5), c(75, 50), c(15, 50), c(15, 5))))
@@ -103,7 +103,7 @@ union <- rbind(op11, op22, op3)
 
 From this, we can make a union function that can work with arbitrary sf objects:
 
-```{r sfUnion eval=FALSE}
+```{r sfUnion, eval=FALSE}
 library(plyr)
 
 my_union_sf <- function(a,b) {
@@ -125,7 +125,7 @@ my_union_sf <- function(a,b) {
 
 Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some transforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
 
-```{r rasterUnion eval=FALSE}
+```{r rasterUnion, eval=FALSE}
 library(sp) # used by 'raster'
 library(raster) # provides: raster::union()
 
@@ -149,7 +149,7 @@ my_union_raster <- function(a,b,sf=TRUE) {
 
 Unfortunately, also this function turns out to be quite slow ...
 
-If a recent version of QGIS is present (version 3.14.16 or newer), we therefor should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
+If a recent version of QGIS is present (version 3.14.16 or newer), we therefore should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
 
 ```{r QGISUnion}
 # needs QGIS 3.14.16 or newer
@@ -179,7 +179,7 @@ my_union <- function(a,b) {
 
 After an initial and not comprehensive test, it seems that the union function in the new terra package is even faster than using a QGIS process for smaller files:
 
-```{r terraUnion eval=FALSE}
+```{r terraUnion, eval=FALSE}
 my_union <- function(a,b) {
 	if (! class(a)[1] == "spatVector") {a <- vect(a)}
 	if (! class(b)[1] == "spatVector") {b <- vect(b)}
@@ -340,8 +340,8 @@ cumi_get_cumulation <- function(i1,i2) {
 	# i2 - the second impact category as string
 	#
 	# The following test needs to come first, because we cannot use NA values in the code further below:
-	if (is.na(i1)) {i1 == 'none'}
-	if (is.na(i2)) {i2 == 'none'}
+	if (is.na(i1)) {i1 <- 'none'}
+	if (is.na(i2)) {i2 <- 'none'}
 	if (i1 == 'none') {return(i2)}
 	if (i2 == 'none') {return(i1)}
 	#
@@ -461,7 +461,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# 'low' zone:
 	if (l-m > 0) {
-		if (! exists("b_low")) {b_low <- st_buffer(myLayer,l)}
+		if (! exists("b_low")) {b_low <- st_buffer(pressureData,l)}
 		b_moderate <- st_buffer(pressureData,m)
 		zone_low <- st_sf(st_difference(st_union(b_low),st_union(b_moderate))) %>%
 		  st_cast("POLYGON") %>% mutate(intensity="low") %>% rename_geometry("geometry")
@@ -540,7 +540,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# This function for now treats intensity as MOP, as we do not have frequency data  yet
 	#
 	# The function uses the global `impact_map` sf layer to add the pressure
-	# Therefor, the output of this function should be assigned to `impact_map` again
+	# Therefore, the output of this function should be assigned to `impact_map` again
 	#
 	# Note 1: mapply() needed in mutate() function since mutate() operates on vectors and the cumi_get_impact() function not.
 	# Also, unname() needed in mutate() function since mapply() will return a named object and we only want the vector inside.
@@ -1231,7 +1231,7 @@ if (! use_pre_calculated_data && do_cumi) {
 		shortName <- case_when(
 			bio == "Circalittoral rock and biogenic reef" ~ "circa hard",
 			bio == "Grobsedimente des Circalitorals" ~ "circa hard",
-			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # misspelling
+			bio == "Grobesedimente des Circalitorals" ~ "circa hard", # misspelling, found in dataset
 			bio == "Mischsedimente des Circalitorals" ~ "circa mix",
 			bio == "Schlickböden des Circalitorals" ~ "circa mud",
 			bio == "Sandböden des Circalitorals" ~ "circa sand",
@@ -1274,14 +1274,14 @@ if (! use_pre_calculated_data && do_cumi) {
 			tmp$sens[i] <- "high"
 			tmp$s_surf[i] <- "high"
 		} else {
-			if (bio == "Na" | is.na(sal)) {
+			if (bio == "NA" | is.na(sal)) {
 				# when sensitivity cannot be determine due to lack of data, use "moderate":
 				tmp$sens[i] <- "moderate"
 				tmp$s_surf[i] <- "moderate"
 			} else if (shortName == "???") {
 				# if the biotope is either of two possibilities,
 				# precautionarily take the one leading to higher sensitivity
-				# (this applies to the EUSeapMap which sometimes assigns two habitats at the same time):
+				# (this applies to the EUSeaMap which sometimes assigns two habitats at the same time):
 				zone <- substr(str_to_lower(word(bio,1)),1,5)
 				if (zone == "offsh") {zone <- "circa"}
 				s1a <- subset(cumi_Sensitivities, Territory==terr & Biotope == paste(zone,"mud",sep=" ") & Sal2 == sal)$sens
@@ -1678,7 +1678,7 @@ Extraction depth and the spatial extent of the extraction within the polygon is 
 
 Frequency could be evaluated from this dataset as the dataset has information on the yearly amount. This could in future be used to apply a pressure frequency calculation (see proposal below).
 
-The confidence is rated 'd1t1s1' for Estonia, Finland, Germany and Russia and 'd0t0s0' for the other countries:
+The confidence is rated 'd1t3s1' for Estonia/Finland/Germany, 'd1t0s1' for Russia and 'd0t0s0' for the other countries:
 
 - data quality is rated 1 as the reported extraction amount alone cannot be used (missing information on extraction depth and spatial extent within the extraction site)
 - temporal coverage is rated 3 for all reporting countries except Russia for which it is 0 as no information on individual years is present
@@ -2179,7 +2179,7 @@ ship_vect <- mutate(ship_vect, depthzone = case_when(
 # depthzone 2: equiv. to  50 % => density value divided by 2
 # depthzone 3: equiv. to  25 % => density value divided by 4
 # depthzone 4: equiv. to  10 % => density value divided by 10
-# depthzone 5: equiv. to	0 % => polygon is removed (everything over 25 m)
+# otherwise:   equiv. to	0 % => polygon is removed (everything over 25 m)
 
 # new attribute column 'intensity':
 ship_vect <- dplyr::mutate(ship_vect, intensity = case_when(
@@ -2300,7 +2300,7 @@ st_write(impact_map,file.path(myDir,paste("Results/CumI-assessment-total-",cumi_
 The resulting CumI-assessment file has a number of columns now. This is what they mean:
 
 - Biotope = HELCOM broadscale habitat
-- sens = general pressure-independant sensitivity
+- sens = general pressure-independent sensitivity
 - s_surf = sensitivity against surface abrasion due to bottom trawling
 - sens_spec = whether the sensitivity was raised to 'high' due to sensitive species
 - level_2 = HELCOM subbasins 2018 (assessment units)
