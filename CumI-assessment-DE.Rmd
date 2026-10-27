@@ -39,13 +39,13 @@ At this time, the following data folders are provided [here](https://portal.helc
 Set the directory of the data folder in the following code chunk.
 
 ```{r setup}
-# --> YOU SHOULD CHANGES THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
+# --> CHANGE THIS LINE FOR YOUR SETUP ON YOUR OWN MACHINE <--
 myDir <- "/Users/Torsten/Marilim/BLANO-MSRL/GIS/CumI"
 myHELCOMDir <- "/Users/Torsten/Library/CloudStorage/OneDrive-MariLimGesellschaftfürGewässeruntersuchungmbH/MSRL/CumI-R/Data-2023-01-20"
 myGeneralDir <- "/Users/Torsten/Marilim/GIS"
 ```
 
-***NOTE:*** This documentation was done for the whole Baltic dataset. Thus, the confidecne rating and most of the text description do not apply to the national German MSFD assessment that is being done in this version !!!
+***NOTE:*** This documentation was done for the whole Baltic dataset. Thus, the confidence rating and most of the text description do not apply to the national German MSFD assessment that is being done in this version !!!
 
 # R packages to use
 The R code uses the following libraries which should be installed first (if not present):
@@ -708,7 +708,7 @@ cumi_file_suffix <- "DE"
 
 
 ## The assessment area
-The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltc See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
+The spatial extent of the assessment area is determined by the HELCOM Assessment Units. There are four (spatial) levels. Level 2 contains the outline of the complete assessment area of the Baltic See[^3] (called *marine area*), divided into 17 *subbasins*. This dataset is used to clip all other layers if they contains parts that are outside of this boundary.
 
 ```{r assessmentArea eval=FALSE}
 if (! use_pre_calculated_data) {
