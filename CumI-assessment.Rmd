@@ -450,6 +450,9 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	m	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_moderate"]]
 	h	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
 
+	# is the polygon footprint itself treated as 'loss' (only applies to polygon data)?
+	footprint_is_loss <- footprint & (st_geometry_type(pressureData,by_geometry=FALSE) %in% c("POLYGON","MULTIPOLYGON"))
+
 	# 'very low' zone:
 	if (vl-l > 0) {
 		b_verylow <- st_buffer(pressureData,vl)
@@ -488,8 +491,16 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	# 'high' zone:
 	if (h-loss > 0) {
 		if (! exists("b_high")) {b_high <- st_buffer(pressureData,h)}
-		if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
-		zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss))) %>%
+		if (loss > 0 || footprint_is_loss) {
+		  # cut out the loss zone (for polygons with loss = 0, b_loss is the footprint itself):
+		  if (! exists("b_loss")) {b_loss <- st_buffer(pressureData,loss)}
+		  zone_high <- st_sf(st_difference(st_union(b_high),st_union(b_loss)))
+		} else {
+		  # no loss zone at all: the high zone starts at the pressure source itself,
+		  # so for polygon data the polygon interior must be included
+		  zone_high <- st_sf(st_union(b_high))
+		}
+		zone_high <- zone_high %>%
 		  st_cast("POLYGON") %>% mutate(intensity="high") %>% rename_geometry("geometry")
 		if (exists("output")) {
 		  output <- add_row(output,zone_high)
@@ -510,7 +521,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	}
 
 	# footprint zone as 'loss':
-	if (footprint & (st_geometry_type(pressureData,by_geometry=FALSE) %in% c("POLYGON","MULTIPOLYGON"))) {
+	if (footprint_is_loss) {
 		zone_footprint <- st_buffer(pressureData,0) %>% st_union() %>% st_sf() %>%
 			st_cast("POLYGON") %>% mutate(intensity="loss") %>% rename_geometry("geometry")
 		if (exists("output")) {
