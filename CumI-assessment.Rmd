@@ -1569,7 +1569,8 @@ if (use_pre_calculated_data) {
 
 	fishing_file_pre <- file.path(myDir,paste("Fishery/fishery_pre_calculated-",cumi_file_suffix,".gpkg",sep=""))
 	if (! file.exists(fishing_file_pre)) {
-		cumi_message("... cannot find file with pre_processed data - skipping bottom trawling fishery ...")
+		cumi_stop("cannot find file with pre-processed bottom trawling fishery data: ",fishing_file_pre,
+			". Set `use_pre_calculated_data` to FALSE to calculate it, or provide the file.")
 	} else {
 		impact_map <- st_read(fishing_file_pre)
 	}
