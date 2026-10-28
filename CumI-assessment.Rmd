@@ -134,8 +134,8 @@ my_union_raster <- function(a,b,sf=TRUE) {
 	# function doing a real GIS union operation such as in QGIS or ArcGIS
 	# on Spatial* objects (from the sp library)
 	#
-	# a - the first sf or Spatial* object
-	# b - the second sf or Spatial* object
+	# a  - the first sf or Spatial* object
+	# b  - the second sf or Spatial* object
 	# sf - whether or not to convert the output to an sf object
 	#
 	# when an objects is not a Spatial* object, it will be converted first
@@ -199,7 +199,7 @@ rename_geometry <- function(g, name){
 	# rename the geometry columns (sfc) to a user-defined name
 	# (taken from: https://gis.stackexchange.com/questions/386584/sf-geometry-column-naming-differences-r)
 	#
-	# g - sf object to rename the geometry column for
+	# g    - sf object to rename the geometry column for
 	# name - the name string to be used for the geometry column
 	#
 	current = attr(g, "sf_column")
@@ -235,7 +235,7 @@ cumi_get_sensi <- function(resist,resil) {
 	# and the resistance as strings
 	#
 	# resist - the resistance as string
-	# resil - the resilience as string
+	# resil  - the resilience as string
 	#
 	resil <- paste("resilience_",gsub(" ", "", resil, fixed = TRUE),sep="")
 	result <- subset(cumi_sensi_matrix,resistance==resist)[[resil]]
@@ -298,7 +298,7 @@ cumi_get_impact <- function(MOP,sensi) {
 	# function returning the impact given the MOP
 	# and the sensitivity as strings
 	#
-	# MOP - MOP category as string
+	# MOP   - MOP category as string
 	# sensi - sensitivity category as string
 	#
 	if (is.na(MOP)) {return("none")}
@@ -438,7 +438,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	# build an sf object that holds all different intensity zones and a loss zone
 	# for a specific pressure
 	#
-	# pressureData - the sf objects holding the raw pressure data as points, lines or polygons
+	# pressureData        - the sf objects holding the raw pressure data as points, lines or polygons
 	# pressureBufferModel - the symbolic name of the buffer model in the tribble 'cumi_buffer'
 	# (column ~pressure)
 	#
@@ -557,7 +557,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	#
 	# pressureData - sf layer with pressure data
 	# pressureType - layer type from tribble `cumi_buffers`, column ~pressure
-	# suffix - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
+	# suffix       - suffix to append to the string "impact_" as name for the column to be filled with the calculated impacts
 	#
 	# This function for now treats intensity as MOP, as we do not have frequency data  yet
 	#
@@ -578,7 +578,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# (This is not optimal modular programming, but it will do for now)
 	#
 	# Note 4: an empty pressure layer stops the script. Typically, this means a filter on the raw data
-	# (e.g. on 'Type' or 'Status') did not match any feature. Continuing would silently drop the pressure
+	# (e.g. on the 'Type' or 'Status' columns) did not match any feature. Continuing would silently drop the pressure
 	# from the assessment while still reporting a confidence value for it.
 	#
 	if (nrow(pressureData) == 0) {
@@ -605,7 +605,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 ```
 
 
-Last, and not least, we want some regular feedback from the script, since some of the operations (especially the GIS union) are taking some time:
+We want some regular feedback from the script, since some of the operations (especially the GIS union) are taking some time:
 
 
 ```{r get_running_time}
@@ -645,6 +645,55 @@ cumi_stop <- function(..., obj = NULL) {
 	#
 	cumi_message(paste0("STOPPING here: ",...), obj)
 	stop("CumI script ends here.", call. = FALSE)
+}
+```
+
+Further, we have some helper functions that check the input data so we do not miss datasets due to e.g. different spellings.
+
+```{r helper_functions}
+cumi_match <- function(x, value) {
+	#
+	# compare attribute values with a value regardless of upper/lower case and
+	# leading/trailing white space
+	#
+	# x     - the attribute column
+	# value - the value to compare with
+	#
+	# used within `filter()`, e.g. `filter(data, cumi_match(Type, "capital"))`
+	#
+	tolower(trimws(as.character(x))) == tolower(trimws(value))
+}
+
+
+cumi_check_values <- function(data, column, allowed = NULL, what = "the data", allow_na = FALSE) {
+	#
+	# stop if an attribute column that is used for filtering contains values we do not know about
+	# (e.g. spelling variants, other categories or missing values)
+	#
+	# data     - the sf layer
+	# column   - name of the attribute column
+	# allowed  - values the column may contain (upper/lower case and white space are ignored);
+	#            if NULL, nothing is checked but the values found are printed
+	# what     - short description of the layer for the messages
+	# allow_na - whether missing values (NA) are accepted; note that empty text in a shapefile
+	#            is read as NA, so an "empty string" value in the data arrives here as NA
+	#
+	if (! column %in% names(data)) {
+		cumi_stop("column '",column,"' not found in ",what)
+	}
+	x <- as.character(data[[column]])
+	if (is.null(allowed)) {
+		cumi_message(paste0("... values in column '",column,"' of ",what,": ",
+			paste0("'",sort(unique(x),na.last=TRUE),"'",collapse=", ")))
+	} else {
+		bad <- ! tolower(trimws(x)) %in% tolower(trimws(allowed))
+		if (allow_na) {bad <- bad & ! is.na(x)}
+		if (any(bad)) {
+			cumi_stop("column '",column,"' of ",what," contains unexpected value(s): ",
+				paste0("'",sort(unique(x[bad]),na.last=TRUE),"'",collapse=", "),
+				". Expected (not case-sensitive): ",paste0("'",allowed,"'",collapse=", "),".")
+		}
+	}
 }
 ```
 
@@ -1841,10 +1890,11 @@ The confidence is rated 'd1t0s1':
 cumi_message("...maintenance dredging (areas) ...")
 dredge_a_file <- file.path(myDir,"dredging/Dredging_areas.shp")
 dredge_1 <- st_read(dredge_a_file) %>% st_zm()
+cumi_check_values(dredge_1, "Type", c("maintenance","capital"), "the dredging areas")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_1,Type == "maintenance"),"dredging M","3E")
+	impact_map <- cumi_process_pressure(filter(dredge_1,cumi_match(Type,"maintenance")),"dredging M","3E")
 }
 if (do_cumi) {
 	# confidence:
@@ -1855,7 +1905,7 @@ cumi_message("... capital dredging (areas) ...")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_1,Type == "Capital"),"dredging CAP","3F")
+	impact_map <- cumi_process_pressure(filter(dredge_1,cumi_match(Type,"capital")),"dredging CAP","3F")
 }
 if (do_cumi) {
 	# confidence:
@@ -1878,6 +1928,8 @@ cumi_message("... maintenance dredging (points) ...")
 dredge_p_file <- file.path(myDir,"dredging/Dredging_points.shp")
 dredge_3 <- st_read(dredge_p_file) %>% st_zm()
 
+cumi_check_values(dredge_3, "Type", c("maintenance","capital"), "the dredging points")
+
 # check for the column to exists and the values:
 if (! "amount_m3" %in% names(dredge_3)) {
 	cumi_stop("column 'amount_m3' not found in ",dredge_p_file)
@@ -1890,7 +1942,7 @@ if (! is.numeric(dredge_3$amount_m3) || length(amount_bad) > 0) {
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_3,Type == "Maintenance"),"dredging M","3G")
+	impact_map <- cumi_process_pressure(filter(dredge_3,cumi_match(Type,"maintenance")),"dredging M","3G")
 }
 if (do_cumi) {
 	# confidence:
@@ -1901,7 +1953,7 @@ cumi_message("... capital dredging (points) ...")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_3,Type == "Capital" & (amount_m3 > 5000 | amount_m3 == 0)),"dredging CAP2","3H")
+	impact_map <- cumi_process_pressure(filter(dredge_3,cumi_match(Type,"capital") & (amount_m3 > 5000 | amount_m3 == 0)),"dredging CAP2","3H")
 }
 if (do_cumi) {
 	# confidence:
@@ -1910,7 +1962,7 @@ if (do_cumi) {
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_3,Type == "Capital" & (amount_m3 <= 5000 & amount_m3 > 0)),"dredging CAP1","3I")
+	impact_map <- cumi_process_pressure(filter(dredge_3,cumi_match(Type,"capital") & (amount_m3 <= 5000 & amount_m3 > 0)),"dredging CAP1","3I")
 }
 if (do_cumi) {
 	# confidence:
@@ -1931,12 +1983,13 @@ The confidence is rated 'd1t0s1':
 dredge_l_file <- file.path(myDir,"dredging/Dredging_lines.shp")
 
 dredge_l <- st_read(dredge_l_file) %>% st_zm()
+cumi_check_values(dredge_l, "Type", c("maintenance","capital"), "the dredging lines")
 
 cumi_message("... maintenance dredging (lines) ...")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_l,Type == "maintenance"),"dredging M","3J")
+	impact_map <- cumi_process_pressure(filter(dredge_l,cumi_match(Type,"maintenance")),"dredging M","3J")
 }
 if (do_cumi) {
 	# confidence:
@@ -1947,7 +2000,7 @@ cumi_message("... capital dredging (lines) ...")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
-	impact_map <- cumi_process_pressure(filter(dredge_l,Type == "capital"),"dredging CAP2","3K")
+	impact_map <- cumi_process_pressure(filter(dredge_l,cumi_match(Type,"capital")),"dredging CAP2","3K")
 }
 if (do_cumi) {
 	# confidence:
@@ -2022,6 +2075,7 @@ cable_file <- file.path(myDir,"Cables/Cables.shp")
 cable_oc <- st_read(cable_file) %>%
 	st_zm() %>%
 	st_cast("LINESTRING")
+cumi_check_values(cable_oc, "Status", c("operational","under construction"), "the cables")
 
 
 # In this case, MOP is the same as intensity as frequency does not apply:
@@ -2045,7 +2099,7 @@ cable_oc <- st_read(cable_file) %>%
 
 cumi_message("... operational cables ...")
 if (do_cumi || store_pressure_maps) {
-	impact_map <- cumi_process_pressure(filter(cable_oc,Status == "Operational"),"cable O","4C")
+	impact_map <- cumi_process_pressure(filter(cable_oc,cumi_match(Status,"operational")),"cable O","4C")
 }
 if (do_cumi) {
 	# confidence:
@@ -2054,7 +2108,7 @@ if (do_cumi) {
 
 cumi_message("... cables under construction ...")
 if (do_cumi || store_pressure_maps) {
-	impact_map <- cumi_process_pressure(filter(cable_oc,Status == "Under construction"),"cable C","4D")
+	impact_map <- cumi_process_pressure(filter(cable_oc,cumi_match(Status,"under construction")),"cable C","4D")
 }
 if (do_cumi) {
 	# confidence:
@@ -2081,13 +2135,14 @@ The confidence is rated 'd1t0s1':
 
 ```{r}
 cumi_message("... wind farms in operation ...")
-# the file only seems to contains turbines, at least there is no information on transformer platforms included:
 wind_file <- file.path(myDir,"Wind turbines and platforms/wind_offshore.shp")
 wind_x <- st_read(wind_file)
+# known foundation types; "" (= no foundation specified) is read as NA from a shapefile, so NA is allowed, too:
+cumi_check_values(wind_x, "Foundation", c("Transformer","monopile","jacket","Artificial island",""), "the wind turbines", allow_na = TRUE)
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(wind_x,! Foundation == "monopile" | is.na(Foundation)),"OWF O","5A")
+	impact_map <- cumi_process_pressure(filter(wind_x,! cumi_match(Foundation,"monopile") | is.na(Foundation)),"OWF O","5A")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_5A = "d1t0s1")
@@ -2095,7 +2150,7 @@ if (do_cumi) {
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(wind_x,Foundation == "monopile"),"OWF O mono","5B")
+	impact_map <- cumi_process_pressure(filter(wind_x,cumi_match(Foundation,"monopile")),"OWF O mono","5B")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_5B = "d1t0s1")
@@ -2140,10 +2195,11 @@ cumi_message("... coastal protection (lines) ...")
 # line data:
 def_2_file <- file.path(myDir, "Coastal defence/CoastalDefence_lines_APPEND.shp")
 def_2 <- st_read(def_2_file)
+cumi_check_values(def_2, "Status", c("under construction","operational"), "the coastal defence lines")
 
 if (do_cumi || store_pressure_maps) {
 	# MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(def_2,Status == "under construction"),"coastalDef C","6B")
+	impact_map <- cumi_process_pressure(filter(def_2,cumi_match(Status,"under construction")),"coastalDef C","6B")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_6B = "d1t0s1")
@@ -2151,7 +2207,7 @@ if (do_cumi) {
 
 if (do_cumi || store_pressure_maps) {
 	# MOP is the same as intensity as frequency does not apply:
-	impact_map <- cumi_process_pressure(filter(def_2,Status == "operational"),"coastalDef O","6C")
+	impact_map <- cumi_process_pressure(filter(def_2,cumi_match(Status,"operational")),"coastalDef O","6C")
 }
 if (do_cumi) {
 	impact_map <- impact_map %>% mutate(confidence_6C = "d1t0s1")
