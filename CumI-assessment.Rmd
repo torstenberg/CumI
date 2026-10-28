@@ -451,7 +451,7 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 	h	 <- filter(cumi_buffers,pressure==pressureBufferModel)[["buffer_high"]]
 
 	if (length(h) != 1) {
-		stop(paste0("CumI: buffer model '",pressureBufferModel,"' not found (or found more than once) in function cumi_buffers"))
+		cumi_stop("buffer model '",pressureBufferModel,"' not found (or found more than once) in function cumi_buffers")
 	}
 
 	# is the polygon footprint itself treated as 'loss' (only applies to polygon data)?
@@ -538,8 +538,8 @@ cumi_buffer_intensity <- function(pressureData,pressureBufferModel) {
 
 	# no-zone-at-all can happen for a model with all buffers = 0 applied to non-polygon data or for an empty input layer:
 	if (! exists("output", inherits = FALSE)) {
-		stop(paste0("CumI: no intensity zones created for buffer model '",pressureBufferModel,
-			"' (all buffers are 0 and the footprint is not applicable to the geometry type of the input)."))
+		cumi_stop("no intensity zones created for buffer model '",pressureBufferModel,
+			"' (all buffers are 0 and the footprint is not applicable to the geometry type of the input).")
 	}
 
 	return(output)
@@ -582,8 +582,8 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# from the assessment while still reporting a confidence value for it.
 	#
 	if (nrow(pressureData) == 0) {
-		stop(paste0("CumI: pressure layer for ",pressureType," (impact_",suffix,") has 0 features. ",
-			"Either the filter on the input data is wrong or the pressure layer is empty."))
+		cumi_stop("pressure layer for ",pressureType," (impact_",suffix,") has 0 features. ",
+			"Either the filter on the input data is wrong or the pressure layer is empty.")
 	}
 	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
 	if (store_pressure_maps) {
@@ -622,15 +622,29 @@ get_running_time <- function(n1,n2) {
 	return(paste(min2,"minutes = ",hours,"hours"))
 }
 
-cumi_message <- function(msg) {
+cumi_message <- function(msg, obj = NULL) {
 	#
 	# print some nice, friendly message
 	#
 	# msg - text of the message to print
+	# obj - optional object (e.g. a data frame) to print below the message
 	#
 	msg <- paste("--- CumI --- (now running for ", get_running_time(n1,Sys.time()),"): ",msg,sep="")
+	if (! is.null(obj)) {msg <- paste(c(msg, capture.output(print(obj))), collapse="\n")}
 	cat(paste(" ",msg," "," ",sep="\n"))
 	flush.console()
+}
+
+cumi_stop <- function(..., obj = NULL) {
+	#
+	# print a message (see cumi_message()) and end the script
+	#
+	# ... - the parts of the message text to print; they are pasted together without separator,
+	#       so there is no need to call paste() or paste0() when calling this function
+	# obj - optional object (e.g. a data frame) to print below the message
+	#
+	cumi_message(paste0("STOPPING here: ",...), obj)
+	stop("CumI script ends here.", call. = FALSE)
 }
 ```
 
@@ -1370,8 +1384,7 @@ if (! use_pre_calculated_data && do_cumi) {
 
 	if (missCount > 0) {
 		cat("Missing sensitivity information for:",missData,sep="\n")
-		cumi_message(paste("STOPPING here due to",missCount,"missing sensitivities!",sep=" "))
-		stop("CumI script ends here.")
+		cumi_stop(missCount," missing sensitivities (see list above)!")
 	}
 
 	# this file is a mix of polygon and multipolygon, so we cast everything to multipolygon first,
@@ -1825,10 +1838,9 @@ The confidence is rated 'd1t0s1':
 - spatial coverage is rated 1 (assumed that all countries have provided data)
 
 ```{r}
+cumi_message("...maintenance dredging (areas) ...")
 dredge_a_file <- file.path(myDir,"dredging/Dredging_areas.shp")
 dredge_1 <- st_read(dredge_a_file) %>% st_zm()
-
-cumi_message("...maintenance dredging (areas) ...")
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
@@ -1862,10 +1874,19 @@ The confidence is rated 'd1t0s1':
 
 
 ```{r}
+cumi_message("... maintenance dredging (points) ...")
 dredge_p_file <- file.path(myDir,"dredging/Dredging_points.shp")
 dredge_3 <- st_read(dredge_p_file) %>% st_zm()
 
-cumi_message("... maintenance dredging (points) ...")
+# check for the column to exists and the values:
+if (! "amount_m3" %in% names(dredge_3)) {
+	cumi_stop("column 'amount_m3' not found in ",dredge_p_file)
+}
+amount_bad <- if (is.numeric(dredge_3$amount_m3)) {which(! is.finite(dredge_3$amount_m3))} else {seq_len(nrow(dredge_3))}
+if (! is.numeric(dredge_3$amount_m3) || length(amount_bad) > 0) {
+	cumi_stop("column 'amount_m3' of the dredging points must contain only real numbers (0 = amount not reported). ",
+		"It has type ",class(dredge_3$amount_m3)[1]," and ",length(amount_bad)," value(s) that are not real numbers.")
+}
 
 if (do_cumi || store_pressure_maps) {
 	# In this case, MOP is the same as intensity as frequency is currently ignored:
