@@ -622,14 +622,14 @@ get_running_time <- function(n1,n2) {
 	return(paste(min2,"minutes = ",hours,"hours"))
 }
 
-cumi_message <- function(msg, obj = NULL) {
+cumi_message <- function(..., obj = NULL) {
 	#
 	# print some nice, friendly message
 	#
-	# msg - text of the message to print
+	# ... - the parts of the message text to print, will be joined without separator in between
 	# obj - optional object (e.g. a data frame) to print below the message
 	#
-	msg <- paste("--- CumI --- (now running for ", get_running_time(n1,Sys.time()),"): ",msg,sep="")
+	msg <- paste0("--- CumI --- (now running for ", get_running_time(n1,Sys.time()),"): ",...)
 	if (! is.null(obj)) {msg <- paste(c(msg, capture.output(print(obj))), collapse="\n")}
 	cat(paste(" ",msg," "," ",sep="\n"))
 	flush.console()
@@ -639,11 +639,10 @@ cumi_stop <- function(..., obj = NULL) {
 	#
 	# print a message (see cumi_message()) and end the script
 	#
-	# ... - the parts of the message text to print; they are pasted together without separator,
-	#       so there is no need to call paste() or paste0() when calling this function
+	# ... - the parts of the message text to print (see cumi_message())
 	# obj - optional object (e.g. a data frame) to print below the message
 	#
-	cumi_message(paste0("STOPPING here: ",...), obj)
+	cumi_message("STOPPING here: ",..., obj = obj)
 	stop("CumI script ends here.", call. = FALSE)
 }
 ```
@@ -683,8 +682,8 @@ cumi_check_values <- function(data, column, allowed = NULL, what = "the data", a
 	}
 	x <- as.character(data[[column]])
 	if (is.null(allowed)) {
-		cumi_message(paste0("... values in column '",column,"' of ",what,": ",
-			paste0("'",sort(unique(x),na.last=TRUE),"'",collapse=", ")))
+		cumi_message("... values in column '",column,"' of ",what,": ",
+			paste0("'",sort(unique(x),na.last=TRUE),"'",collapse=", "))
 	} else {
 		bad <- ! tolower(trimws(x)) %in% tolower(trimws(allowed))
 		if (allow_na) {bad <- bad & ! is.na(x)}
@@ -867,7 +866,7 @@ if (! use_pre_calculated_data && do_cumi) {
         myShort == "22" ~ "Zostera",
         TRUE ~ "undefined"
       )
-      cumi_message(paste("... ", myfile, ", ",myName, sep=""))
+      cumi_message("... ", myfile, ", ",myName)
       mydata <- rast(file.path(species_folder,myfile))
       # convert to vector data:
       mydata_poly <- terra::as.polygons(mydata, dissolve=FALSE)
@@ -2268,8 +2267,13 @@ depths <- rast(file.path(myDir,"Base/depth rasters/depth_1x1km.tif"))
 tmp <- terra::extract(depths,vect(ship_vect), 'mean')
 ship_vect <- cbind(ship_vect,tmp) %>% st_as_sf() %>% dplyr::rename(depth = depth_1x1km)
 
-# remove all data below 25m depth (= no impact assumed)
-ship_vect <- filter(ship_vect,depth <= 25)
+# report cells without a depth value (outside the depth raster); they are removed below
+if (any(is.na(ship_vect$depth))) {
+	cumi_message(sum(is.na(ship_vect$depth))," shipping cell(s) without depth information are removed (no impact assumed).")
+}
+
+# remove all data at 0 m or above land (depth <= 0, no ship can sail there) and everything deeper than 25 m (= no impact assumed)
+ship_vect <- filter(ship_vect,depth > 0 & depth <= 25)
 
 # classify depths into zones:
 ship_vect <- mutate(ship_vect, depthzone = case_when(
@@ -2286,7 +2290,7 @@ ship_vect <- mutate(ship_vect, depthzone = case_when(
 # depthzone 2: equiv. to  50 % => density value divided by 2
 # depthzone 3: equiv. to  25 % => density value divided by 4
 # depthzone 4: equiv. to  10 % => density value divided by 10
-# otherwise:   equiv. to	0 % => polygon is removed (everything over 25 m)
+# otherwise:   equiv. to	0 % => polygon is removed (everything over 25 m or at 0 m / negative depth; the latter already removed by the filter above)
 
 # new attribute column 'intensity':
 ship_vect <- dplyr::mutate(ship_vect, intensity = case_when(
