@@ -645,6 +645,37 @@ cumi_stop <- function(..., obj = NULL) {
 	cumi_message("STOPPING here: ",..., obj = obj)
 	stop("CumI script ends here.", call. = FALSE)
 }
+
+cumi_write_cache <- function(x, path) {
+	#
+	# write a pre-calculated layer to a GeoPackage file which is read again when `use_pre_calculated_data` is TRUE.
+	# An existing file is only overwritten after the user has confirmed, so that a backup can be made before.
+	# If the user does not confirm (or cannot be asked as the script is not run interactively, e.g. when knitting),
+	# nothing is overwritten and the layer is NOT lost: it is written to a new file with a timestamp instead.
+	#
+	# x    - the sf layer to write
+	# path - the file to write to
+	#
+	if (! file.exists(path)) {
+		st_write(x, path)
+	} else {
+		answer <- ""
+		if (interactive()) {
+			cumi_message("the file ",path," already exists and is about to be overwritten. Make a backup of it now if you need one.")
+			answer <- readline("Overwrite the file? (y/n): ")
+		}
+		if (tolower(trimws(answer)) %in% c("y","yes")) {
+			cumi_message("overwriting ",path," ...")
+			st_write(x, path, delete_dsn = TRUE)
+		} else {
+			path_new <- sub("\\.gpkg$", paste0("-",format(Sys.time(),"%Y-%m-%dT%H%M%S"),".gpkg"), path)
+			cumi_message("the file ",path," was NOT overwritten. Writing to ",path_new," instead. ",
+				"Rename it to use it as pre-calculated data.")
+			st_write(x, path_new)
+		}
+	}
+	invisible(path)
+}
 ```
 
 Further, we have some helper functions that check the input data so we do not miss datasets due to e.g. different spellings.
@@ -1439,7 +1470,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	# in order to prevent errors in later spatial operations
 	biotopeLayer <- tmp %>% st_cast("MULTIPOLYGON") %>% st_make_valid()
 	# as a last step write the layer to a file:
-	st_write(biotopeLayer,file.path(myDir,paste("Biotopes/biotopes-pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
+	cumi_write_cache(biotopeLayer,file.path(myDir,paste("Biotopes/biotopes-pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
 }
 ```
 
@@ -1685,7 +1716,7 @@ if (use_pre_calculated_data) {
 		impact_map$confidence_1[impact_map$Territory != "Russia"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 != "none"] <- "d3t3s1"
 		impact_map$confidence_1[impact_map$Territory == "Russia"& impact_map$impact_1 == "none"] <- "d0t0s0"
-		st_write(impact_map,file.path(myDir,paste("Fishery/fishery_pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
+		cumi_write_cache(impact_map,file.path(myDir,paste("Fishery/fishery_pre_calculated-",cumi_file_suffix,".gpkg",sep="")))
 	}
 }
 
