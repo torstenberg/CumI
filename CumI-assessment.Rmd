@@ -355,6 +355,33 @@ cumi_get_cumulation <- function(i1,i2) {
 		return(result)
 	}
 }
+
+# all impact categories from the lowest to the highest:
+cumi_impact_order <- c("none","very low","low","m1","m2","m3","high","loss")
+
+cumi_cumulate <- function(impacts) {
+	#
+	# function returning the cumulative impact of any number of impacts at the same place
+	#
+	# impacts - the impact categories as character vector (NA is treated as 'none')
+	#
+	# The cumulation matrix is only associative with two impacts, i.e. the result of cumulating three or more impacts
+	# depends on the order in which they are combined (e.g. m1 + m1 + m2 gives m3, but m2 + m1 + m1 gives m2).
+	# To make the result independent of the order, the impacts are sorted from the lowest to the highest impact
+	# before they are cumulated pair-wise. This ensures a conservative approach where many smaller imapcts still cumulate
+	# instead of staying at the same level. Example from the moderate class (m1 to m3):
+	#
+	# lowest to highest: (m1 + m1) + m2 = m2 + m2 = m3  <- this is implemented here
+	# highest to lowest: (m2 + m1) + m1 = m2 + m1 = m2
+	#
+	impacts[is.na(impacts)] <- "none"
+	rank <- match(impacts,cumi_impact_order)
+	if (any(is.na(rank))) {
+		cumi_stop("unknown impact category in cumulation: ",paste0("'",unique(impacts[is.na(rank)]),"'",collapse=", "),
+			". Expected: ",paste0("'",cumi_impact_order,"'",collapse=", "))
+	}
+	Reduce(cumi_get_cumulation,impacts[order(rank)])
+}
 ```
 
 Some of the pressures work with a buffering. This means, the pressure is acting on a spatially larger area than the actual footprint (polygon, line or point data) of the pressure source. These pressures are listed here. The intensity of the pressure decreases with increasing distance from the pressure. The buffer distances in the table below represent the maximum distance (in metres) for the specific pressure intensity category, measured from the pressure source. As an example, a buffer distance of 50 for a high intensity means a buffer from 0–50 metres around a pressure source (which can be a point, a line or a polygon). A subsequent moderate intensity up to 100 then is an adjacent buffer 50–100 metres around a pressure source. So, the number in a specific column is always the radius of the outer border of a zone, not its width.
@@ -2379,7 +2406,7 @@ if (do_cumi) {cumi_message("Cumulating all impacts ...")}
 ```
 
 
-Now, all individual impacts are calculated and integrated into the biotope map. So, we can now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon and then do a pair-wise combination:
+Now, all individual impacts are calculated and integrated into the biotope map. So, we can now do the cumulation step by taking every single polygon, looking at all individual impacts for that polygon, sorting them from the lowest to the highest impact (so that the result does not depend on the order of the pressures) and then do a pair-wise combination:
 
 
 ```{r do_cumulation}
@@ -2393,21 +2420,15 @@ if (do_cumi) {
 	# initialize a new column 'cumi' for the cumulative impact:
 	impact_map <- mutate(impact_map,cumi = NA)
 
-	initialColumn <- impactColumns[1]
-	columnCount <- length(impactColumns)
+	# all individual impacts as a plain matrix (one row per polygon, one column per pressure):
+	impactValues <- as.matrix(st_drop_geometry(impact_map)[, impactColumns, drop = FALSE])
 
 	# loop over each polygon/multipolygon in the map:
 	print(paste("0 of",nrow(impact_map)))
 	for (myRowIndex in 1:nrow(impact_map)) {
-		rowData <- impact_map[myRowIndex, ]
 		if (myRowIndex %% 2000 == 0) {print(paste(myRowIndex,"of",nrow(impact_map))); flush.console()}
-		# foreach pair of impact columns, do the cumulation:
-		for (myColIndex in 1:(columnCount-1)) {
-			if (myColIndex == 1) {i1 <- rowData[[impactColumns[1]]]} else {i1 <- ik}
-			i2 <- rowData[[impactColumns[myColIndex+1]]]
-			ik <- cumi_get_cumulation(i1,i2)
-		}
-		impact_map$cumi[myRowIndex] <- ik
+		# cumulate all impacts of this polygon (sorted from the lowest to the highest impact):
+		impact_map$cumi[myRowIndex] <- cumi_cumulate(impactValues[myRowIndex, ])
 	}
 }
 ```
