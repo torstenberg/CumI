@@ -1704,6 +1704,11 @@ if (use_pre_calculated_data) {
 		TRUE									   ~ 'undefined'
 	))
 
+	# an undefined MOP (e.g. missing SAR values) would silently end up as 'no impact' later on, so we stop here:
+	if (any(fishing_x$MOP == 'undefined')) {
+		cumi_stop(sum(fishing_x$MOP == 'undefined')," fishery polygon(s) with undefined MOP (missing or non-numeric SAR values) in ",fishing_file,".")
+	}
+
 	cumi_message("... cleaning up ...")
 	# we can now delete the columns we do not need in future
 	# and we can remove all polygons with no MOP
@@ -1712,8 +1717,10 @@ if (use_pre_calculated_data) {
 		dplyr::select(-starts_with("F20")) %>%
 		dplyr::select(-c("Shape_Leng","Shape_Area","sar_avg")) %>%
 		dplyr::filter(! MOP=='none') %>%
+		st_make_valid() %>%
 		group_by(MOP) %>%
-		st_make_valid()
+		summarize() %>%
+		st_cast("MULTIPOLYGON")
 
 	if (store_pressure_maps) {
 		st_write(fishing_x,pressure_maps_file, layer = "mop_1")
