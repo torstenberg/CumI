@@ -101,11 +101,9 @@ op22 <- dplyr::mutate(op2, station=NA)
 union <- rbind(op11, op22, op3)
 ```
 
-From this, we can make a union function that can work with arbitrary sf objects:
+From this, we can make a union function that can work with arbitrary sf objects. Judging from some limited tests, this function seems to be the fastest one compared to ones following after. Therefore it is used by default. Change the default by assigning your function of choice to `my_union`:
 
-```{r sfUnion, eval=FALSE}
-library(plyr)
-
+```{r sfUnion}
 my_union_sf <- function(a,b) {
 	#
 	# function doing a real GIS union operation such as in QGIS or ArcGIS
@@ -118,16 +116,17 @@ my_union_sf <- function(a,b) {
 	op1 <- st_difference(a,st_union(b))
 	op2 <- st_difference(b, st_union(a))
 	op3 <- st_intersection(b, a)
-	union <- rbind.fill(op1, op2, op3)
-	return(st_as_sf(union))
+	union <- dplyr::bind_rows(op1, op2, op3)
+	# where polygons only touch each other, the intersection contains lines and points - we only want the polygons:
+	union <- st_collection_extract(st_as_sf(union), "POLYGON")
+	return(union)
 }
 ```
 
-Since this custom sf function is very slow (and I mean: veeeery slow), we explore another possibility provided by the raster library which, however, involves some transforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame):
+Another possibility provided is by the raster library. However, it involves some transforming back and forth to sp Spatial\* objects (SpatialPolygonsDataFrame). Note: we do not attach the raster package with `library()` but call raster::union() with its namespace, as it would otherwise mask `dplyr::select()`:
 
-```{r rasterUnion, eval=FALSE}
-library(sp) # used by 'raster'
-library(raster) # provides: raster::union()
+```{r rasterUnion}
+# note: the sp package (used by 'raster' via sf::as_Spatial()) is loaded by sf when needed, so no library(sp) here
 
 my_union_raster <- function(a,b,sf=TRUE) {
 	#
@@ -147,9 +146,7 @@ my_union_raster <- function(a,b,sf=TRUE) {
 }
 ```
 
-Unfortunately, also this function turns out to be quite slow ...
-
-If a recent version of QGIS is present (version 3.14.16 or newer), we therefore should utilize the function `qgis_run_algorithm` and let the union be done by QGIS. This will increase the performance by many magnitudes! You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the additional benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
+If a recent version of QGIS is present (version 3.14.16 or newer), we can also utilize the function `qgis_run_algorithm` and let the union be done by QGIS. You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
 
 ```{r QGISUnion}
 # needs QGIS 3.14.16 or newer
@@ -158,7 +155,7 @@ If a recent version of QGIS is present (version 3.14.16 or newer), we therefore 
 # remotes::install_github("paleolimbot/qgisprocess")
 library(qgisprocess)
 
-my_union <- function(a,b) {
+my_union_qgis <- function(a,b) {
 	st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
 	st_agr(b) = "constant"
 	result <- qgis_run_algorithm(
@@ -177,19 +174,22 @@ my_union <- function(a,b) {
 }
 ```
 
-After an initial and not comprehensive test, it seems that the union function in the new terra package is even faster than using a QGIS process for smaller files:
+It seems that the union function in the terra package is approx. equally fast than using sf:
 
-```{r terraUnion, eval=FALSE}
-my_union <- function(a,b) {
-	if (! class(a)[1] == "spatVector") {a <- vect(a)}
-	if (! class(b)[1] == "spatVector") {b <- vect(b)}
+```{r terraUnion}
+my_union_terra <- function(a,b) {
+	if (! class(a)[1] == "SpatVector") {a <- vect(a)}
+	if (! class(b)[1] == "SpatVector") {b <- vect(b)}
 	result <- terra::union(a,b)
-	return(st_to_sf(result))
+	return(st_as_sf(result))
 }
 ```
 
-If you can't use QGIS or terra, you will need to rename one of the first two union functions to `my_union` (and rename the QGIS/terra function to something else) and live with a very poor performance, meaning to wait hours and hours for some GIS union processing (I don't even know how long it takes because I always stopped the execution after 1–2 hours).
+This line assigns the function we want to use:
 
+```{r my_union}
+my_union <- my_union_sf
+```
 
 Sometimes, we need to rename the geometry column of an sf object, since sf itself will give it some weird names:
 
@@ -790,6 +790,12 @@ Normally, you want the CumI assessment to be done. But if you only want the pres
 
 ```{r do_cumi}
 do_cumi <- TRUE
+```
+
+The bottom trawling layer consists of one polygon per 1 x 1 km grid cell. Before it is combined with the biotope map (the union, which takes most of the processing time), it can optionally be dissolved by MOP class, i.e. neighbouring cells of the same MOP are merged into larger multipolygons. This gives fewer polygons in the result (the biotope polygons are not cut along the grid lines between cells of the same MOP, so the cumulation loop later has less to do), but the dissolved layer does not keep the yearly SAR columns (`sar_2016` etc.). The effect on the processing time depends on the union function used (see the section on the union functions): in tests with synthetic data, the QGIS union was much slower with the dissolved layer (many times slower), while the `terra` and `sf` unions were not. The default setting used here is not to dissolve. Note: when using the pre-calculated fishery data (see `use_pre_calculated_data`), the pre-calculated file contains the layer as it was when the file was created:
+
+```{r dissolve_fishing_layer}
+dissolve_fishing_layer <- FALSE
 ```
 
 The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
@@ -1712,15 +1718,17 @@ if (use_pre_calculated_data) {
 	cumi_message("... cleaning up ...")
 	# we can now delete the columns we do not need in future
 	# and we can remove all polygons with no MOP
-	# and dissolve the MOP layer:
+	# and, if `dissolve_fishing_layer` is TRUE, dissolve the MOP layer:
 	fishing_x <- fishing_x %>%
 		dplyr::select(-starts_with("F20")) %>%
 		dplyr::select(-c("Shape_Leng","Shape_Area","sar_avg")) %>%
 		dplyr::filter(! MOP=='none') %>%
-		st_make_valid() %>%
-		group_by(MOP) %>%
-		summarize() %>%
-		st_cast("MULTIPOLYGON")
+		st_make_valid()
+	if (dissolve_fishing_layer) {
+		# (this makes the QGIS union below much slower, see the setup of `dissolve_fishing_layer`)
+		cumi_message("... dissolving the fishery layer by MOP ...")
+		fishing_x <- fishing_x %>% group_by(MOP) %>% summarize() %>% st_cast("MULTIPOLYGON")
+	}
 
 	if (store_pressure_maps) {
 		st_write(fishing_x,pressure_maps_file, layer = "mop_1")
