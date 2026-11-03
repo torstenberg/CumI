@@ -104,21 +104,60 @@ union <- rbind(op11, op22, op3)
 From this, we can make a union function that can work with arbitrary sf objects. Judging from some limited tests, this function seems to be the fastest one compared to ones following after. Therefore it is used by default. Change the default by assigning your function of choice to `my_union`:
 
 ```{r sfUnion}
-my_union_sf <- function(a,b) {
+my_union_sf <- function(a,b,progress_after=5) {
 	#
 	# function doing a real GIS union operation such as in QGIS or ArcGIS
 	#
-	# a - the first sf
-	# b - the second sf
+	# a              - the first sf
+	# b              - the second sf
+	# progress_after - progress (in 10% steps) is only reported when the union takes longer than this many seconds,
+	#                  so the many quick unions stay silent (0 = always report, Inf = never report)
+	#
+	# To be able to report progress, the three operations are done in up to 10 pieces of rows each. This gives the same
+	# features as doing them in one go (only the row order may differ). The two st_union() calls cannot be divided.
+	# The progress counts finished pieces, not time, so it only roughly indicates how much is left.
 	#
 	st_agr(a) = "constant"
 	st_agr(b) = "constant"
-	op1 <- st_difference(a,st_union(b))
-	op2 <- st_difference(b, st_union(a))
-	op3 <- st_intersection(b, a)
+	# bind_rows() keeps two separate geometry columns when they are named differently in a and b
+	# (e.g. "geom" from a GeoPackage and "geometry" from a shapefile), so b gets the name used in a:
+	b <- rename_geometry(b,attr(a,"sf_column"))
+	cumi_pieces <- function(n,k=10) {
+		if (n == 0) return(list(integer(0)))
+		split(seq_len(n),ceiling(seq_len(n)*min(k,n)/n))
+	}
+	pieces_a <- cumi_pieces(nrow(a))
+	pieces_b <- cumi_pieces(nrow(b))
+	total <- 2 + length(pieces_a) + 2*length(pieces_b)
+	start <- Sys.time()
+	done <- 0
+	reported <- 0
+	tick <- function() {
+		done <<- done + 1
+		percent <- 10*floor(10*done/total)
+		if (percent > reported) {
+			reported <<- percent
+			if (difftime(Sys.time(),start,units="secs") > progress_after) {cumi_message("... union ",percent,"% ...")}
+		}
+	}
+	b_all <- st_union(b); tick()
+	op1 <- dplyr::bind_rows(lapply(pieces_a,function(i) {r <- st_difference(a[i,],b_all); tick(); r}))
+	a_all <- st_union(a); tick()
+	op2 <- dplyr::bind_rows(lapply(pieces_b,function(i) {r <- st_difference(b[i,],a_all); tick(); r}))
+	op3 <- dplyr::bind_rows(lapply(pieces_b,function(i) {r <- st_intersection(b[i,],a); tick(); r}))
 	union <- dplyr::bind_rows(op1, op2, op3)
-	# where polygons only touch each other, the intersection contains lines and points - we only want the polygons:
-	union <- st_collection_extract(st_as_sf(union), "POLYGON")
+	# where polygons only touch each other, the intersection contains lines and points - we only want the polygons.
+	# st_collection_extract() is slow for many features, so it is only applied to the geometry collections (which may contain
+	# polygons); features that are points or lines only are deleted, and features that are polygons already are kept as they are:
+	union <- st_as_sf(union)
+	geometry_type <- st_geometry_type(union)
+	is_polygon <- geometry_type %in% c("POLYGON","MULTIPOLYGON")
+	is_collection <- geometry_type == "GEOMETRYCOLLECTION"
+	if (any(is_collection)) {
+		union <- dplyr::bind_rows(union[is_polygon,], st_collection_extract(union[is_collection,], "POLYGON"))
+	} else {
+		union <- union[is_polygon,]
+	}
 	return(union)
 }
 ```
