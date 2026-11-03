@@ -641,10 +641,23 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 	# Note 4: an empty pressure layer stops the script. Typically, this means a filter on the raw data
 	# (e.g. on the 'Type' or 'Status' columns) did not match any feature. Continuing would silently drop the pressure
 	# from the assessment while still reporting a confidence value for it.
+	# When the setting `skip_empty_pressure_layers` is TRUE (see below), the empty layer is
+	# skipped with a message: the column 'impact_<suffix>' is then added with the value "none" for all polygons, and no
+	# pressure map is stored for it. The normal confidence value is still apllied.
 	#
 	if (nrow(pressureData) == 0) {
-		cumi_stop("pressure layer for ",pressureType," (impact_",suffix,") has 0 features. ",
-			"Either the filter on the input data is wrong or the pressure layer is empty.")
+		if (! skip_empty_pressure_layers) {
+			cumi_stop("pressure layer for ",pressureType," (impact_",suffix,") has 0 features. ",
+				"Either the filter on the input data is wrong or the pressure layer is empty. ",
+				"Set `skip_empty_pressure_layers` to TRUE to skip empty pressure layers.")
+		}
+		cumi_message("... SKIPPING pressure layer for ",pressureType," (impact_",suffix,"): it has 0 features.")
+		if (do_cumi) {
+			impact_map[[paste("impact_",suffix,sep="")]] <- "none"
+			return(impact_map)
+		} else {
+			return(pressureData)
+		}
 	}
 	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
 	if (store_pressure_maps) {
@@ -838,6 +851,12 @@ The bottom trawling layer consists of one polygon per 1 x 1 km grid cell. Before
 
 ```{r dissolve_fishing_layer}
 dissolve_fishing_layer <- FALSE
+```
+
+Normally, a pressure layer without any feature stops the script (for example because a filter on the `Type` or `Status` column does not match, or the file is empty), as this usually points to a mistake in the data or the code. When the data cover only a small region, however, it is normal that some pressure types do not occur there. With the following setting such empty layers are skipped, with a message each time: the corresponding `impact_` column is then filled with "none" for all polygons, and the confidence value is kept as the code sets it. Note that this does not apply to the fishery and shipping data, which have their own checks:
+
+```{r skip_empty_pressure_layers}
+skip_empty_pressure_layers <- FALSE
 ```
 
 The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
