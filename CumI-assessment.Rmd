@@ -149,22 +149,17 @@ my_union_raster <- function(a,b,sf=TRUE) {
 If a recent version of QGIS is present (version 3.14.16 or newer), we can also utilize the function `qgis_run_algorithm` and let the union be done by QGIS. You do not need to know how QGIS works in order to use this function. R takes care of it all. This function has the benefit to print out a percentage of the progress, so you can see how long to wait for the next union:
 
 ```{r QGISUnion}
-# needs QGIS 3.14.16 or newer
-# Installation:
-# install.packages("remotes")
-# remotes::install_github("paleolimbot/qgisprocess")
-library(qgisprocess)
-
+# needs the package qgisprocess; it is only loaded at runtime, not at definition time:
 my_union_qgis <- function(a,b) {
 	st_agr(a) = "constant" #to avoid warnings, but see https://github.com/r-spatial/sf/issues/406
 	st_agr(b) = "constant"
-	result <- qgis_run_algorithm(
+	result <- qgisprocess::qgis_run_algorithm(
 		"native:union",
 		INPUT = a,
 		OVERLAY = b,
 		OVERLAY_FIELDS_PREFIX = '')
 	# read the resulting union, get rid of the produced "fid_" columns and make sure the geometry column is correctly named:
-	result <- sf::read_sf(qgis_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
+	result <- sf::read_sf(qgisprocess::qgis_extract_output(result, "OUTPUT")) %>% dplyr::select(-contains("fid_")) %>% rename_geometry("geometry")
 	# sometimes, the union results in some MULTILINESTRINGS - we must delete those:
 	if (st_geometry_type(result,by_geometry=FALSE) == "GEOMETRY") {
 		cumi_message("... deleting MULTILINESTRINGs from last union ...")
@@ -425,7 +420,7 @@ cumi_buffers <- tribble(
 
 ```
 
-```{r cumi_buffers_DE}
+```{r cumi_buffers_DE, eval=FALSE}
 # fishing: wie bei HELCOM, abweichend von alter Fallstudie (Kumulation von surface+subsurface)
 #
 
@@ -2187,6 +2182,8 @@ cumi_message("processing platforms and wind farms ...")
 ```
 
 These are point data. As we do not know from most of the data which kind of fundament the turbines have, we cannot determine whether or not to treat the footprint area as loss (only for one type 'artificial island' this could be possible but we do not know the extent of the island). Currently, we do not treat the footprint as loss when the type is unknown. For monopile fundaments, the footprint is treated as loss (using a radius of 30m, including a potential scour protection).
+
+Transformer platforms (`Foundation` = "Transformer") are part of the wind farms and are treated like all other non-monopile objects, i.e. they use the buffer model `OWF O` (item 5A). The buffer models `platform C` and `platform O` in the table above are currently not used.
 
 The confidence is rated 'd1t0s1':
 
