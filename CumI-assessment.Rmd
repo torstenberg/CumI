@@ -772,6 +772,12 @@ We then define the assessment years to use:
 assessmentYears <- c("2016","2017","2018","2019","2020","2021")
 ```
 
+The shipping density data are not available for all assessment years. So, the years for which the shipping density files exist are defined separately:
+
+```{r shippingYears}
+shippingYears <- c("2016","2017","2018","2019","2020")
+```
+
 As the processing of the clipLayer and the bottom trawling pressure take veeery looong (approx. 7 hours for bottom trawling on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure, a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling. I.e., the pre-calculated layer already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has the MOP from trawling included.
 
 ```{r use_pre_calculated_data}
@@ -1655,52 +1661,30 @@ if (use_pre_calculated_data) {
 	}
 
 	fishingQuarters <- c("1","2","3","4")
-	makeAvg <- function(myLayer,myString) {
-		q <- quote(mutate(myLayer,sar_avg = myString))
-		eval(parse(text=sub("myString", myString, deparse(q))))
-	}
 
 	# treat the quarterly SAR values as not scaled properly, so we need to add the quarterly values per year
 	# and then go on with the yearly values if they exceed or are equal to 0.05:
 	cumi_message("... calculating MOP based on quarterly SAR values ...")
 
-	# the following function doesn't work,
-	# R is completely the wrong language for this kind of parsing and evaluation ...
-	makeSum <- function(myLayer,myString,myYear) {
-	  #q <- quote(mutate(myLayer,paste("sar_",myYear," = ",myString,sep="")))
-	  #eval(parse(text=print(myString)))
-	  var <- paste0("sar_",myYear)
-	  mutate(myLayer, !!sym(var) := eval(parse(text="print(myString)")))
-	}
-
-	fishingYearSARcolumns <- c()
-	for(myYear in assessmentYears) {
-	  fishingYearSARcolumns <- c(fishingYearSARcolumns,paste("sar_",myYear,sep=""))
-	  fishingQuarterlySARcolumns <- c()
-	  for(myQuarter in fishingQuarters) {
-	    fishingQuarterlySARcolumns <- c(fishingQuarterlySARcolumns,paste("F",myYear,"_",myQuarter,sep=""))
+	# sum the quarterly values per assessment year (the fishery data must have the columns F<year>_<quarter> for all years):
+	for (myYear in assessmentYears) {
+	  quarterColumns <- paste0("F",myYear,"_",fishingQuarters)
+	  missingColumns <- setdiff(quarterColumns,names(fishing_x))
+	  if (length(missingColumns) > 0) {
+	    cumi_stop("the fishery data has no column(s) ",paste0("'",missingColumns,"'",collapse=", ")," needed for assessment year ",myYear,".")
 	  }
-	  yearlySum <- paste(fishingQuarterlySARcolumns,collapse='+')
-	  ## the following doesn't work ... ToDo: fix this!
-	  ## fishing_x <- makeSum(fishing_x,yearlySum,myYear)
+	  fishing_x[[paste0("sar_",myYear)]] <- rowSums(st_drop_geometry(fishing_x)[,quarterColumns,drop=FALSE])
 	}
-	# ok, let's hardcode this then ...
-	fishing_x <- mutate(fishing_x,sar_2016 = F2016_1+F2016_2+F2016_3+F2016_4)
-	fishing_x <- mutate(fishing_x,sar_2017 = F2017_1+F2017_2+F2017_3+F2017_4)
-	fishing_x <- mutate(fishing_x,sar_2018 = F2018_1+F2018_2+F2018_3+F2018_4)
-	fishing_x <- mutate(fishing_x,sar_2019 = F2019_1+F2019_2+F2019_3+F2019_4)
-	fishing_x <- mutate(fishing_x,sar_2020 = F2020_1+F2020_2+F2020_3+F2020_4)
-	fishing_x <- mutate(fishing_x,sar_2021 = F2021_1+F2021_2+F2021_3+F2021_4)
+	fishingYearSARcolumns <- paste0("sar_",assessmentYears)
 	# treat yearly SAR values lower than 0.05 as zero intensity:
 	for (myColumn in fishingYearSARcolumns) {
 	  fishing_x[[myColumn]] <- ifelse( fishing_x[[myColumn]]>=0.05, fishing_x[[myColumn]] , 0 )
 	}
-	# expression for the calculation of average SAR and conversion to MOP:
-	sum <- paste(fishingYearSARcolumns,collapse='+')
-	avgSAR <- paste("(", sum, ")/",length(fishingYearSARcolumns))
+	# average SAR over the assessment years:
+	fishing_x$sar_avg <- rowMeans(st_drop_geometry(fishing_x)[,fishingYearSARcolumns,drop=FALSE])
 
 	# convert SAR into MOP:
-	fishing_x <- makeAvg(fishing_x,avgSAR) %>%
+	fishing_x <- fishing_x %>%
 		mutate(MOP = case_when(
 		sar_avg == 0							~ 'none',
 		sar_avg  > 0	 & sar_avg < 0.33 ~ 'very low',
@@ -2321,9 +2305,12 @@ ship_folder <- file.path(myDir,"shipping")
 # note: I had to rename the file with the 2020 data since the filename was missing an 's'
 # compared to the files for the other years:
 myFiles <- c()
-for (myYear in assessmentYears[1:5]) {
+for (myYear in shippingYears) {
 	myRaster <- paste(myYear," All shiptypes AIS Shipping Density.tif",sep="")
 	myFiles <- c(myFiles,file.path(ship_folder,myRaster))
+}
+if (! all(file.exists(myFiles))) {
+	cumi_stop("shipping density file(s) not found: ",paste0("'",myFiles[! file.exists(myFiles)],"'",collapse=", "),".")
 }
 
 # calculate the mean density:
