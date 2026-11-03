@@ -778,7 +778,9 @@ The shipping density data are not available for all assessment years. So, the ye
 shippingYears <- c("2016","2017","2018","2019","2020")
 ```
 
-As the processing of the clipLayer and the bottom trawling pressure take veeery looong (approx. 7 hours for bottom trawling on my machine and failing to report the percentage of finalization beyond the "10 %" value ...) even with the QGIS union procedure, a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling. I.e., the pre-calculated layer already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has the MOP from trawling included.
+**Note: the clipLayer feature described below is currently not used anywhere**
+
+As the processing of the clipLayer and the bottom trawling pressure can take veeery looong (approx. 7 hours for bottom trawling on my machine and failing to report the percentage of finalization beyond the "10 %" value ...), a pre-calculated file is provided, based on the first part of the script up and including the processing of the bottom trawling. I.e., the pre-calculated layer already contains the biotope data combined with the bottom trawling data, and the pre-calculated layer already has the MOP from trawling included.
 
 ```{r use_pre_calculated_data}
 # You can choose to either use the pre-calculated data (set `use_pre_calculated_data` to `TRUE`) for the further process, or re-calculate it here (set it to `FALSE`).
@@ -838,7 +840,7 @@ if (! do_cumi && store_pressure_maps) {
 	# we want an alternative clip layer for the stored pressure maps if we are not using the combined biotope map.
 	# Let us then use the assessment area:
 	cumi_message("... making clipLayer for stored pressure maps ... st_union() ...")
-	clipLayer <- areaLayer %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+	#clipLayer <- areaLayer %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
 }
 ```
 
@@ -1535,12 +1537,14 @@ if (use_pre_calculated_data && do_cumi) {
 ```
 
 
+**Note: the clipLayer feature described below is currently not used anywhere**
+
 All pressure layers will be clipped at the outline of the biotope map, making the pressure layers lie completely within the biotope coverage (and not e.g. on land). For this, we build a clip layer from the biotope layer:
 
 ```{r prep2}
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("... making clipLayer ... st_union() ...")
-	clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
+	#clipLayer <- dplyr::select(biotopeLayer,-c(Biotope,sens,s_surf,sens_spec)) %>% st_cast("MULTIPOLYGON") %>% st_cast("POLYGON") %>% st_union()
 }
 ```
 
