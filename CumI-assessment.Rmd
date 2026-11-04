@@ -122,6 +122,11 @@ my_union_sf <- function(a,b,progress_after=5) {
 	# bind_rows() keeps two separate geometry columns when they are named differently in a and b
 	# (e.g. "geom" from a GeoPackage and "geometry" from a shapefile), so b gets the name used in a:
 	b <- rename_geometry(b,attr(a,"sf_column"))
+	# stop when the coordinate systems differ:
+	if (st_crs(a) != st_crs(b)) {
+		cumi_stop("union of layers in different coordinate systems ('",st_crs(a)$input,"' and '",st_crs(b)$input,
+			"'); transform them to the same coordinate system first (see `cumi_transform_crs()`).")
+	}
 	cumi_pieces <- function(n,k=10) {
 		if (n == 0) return(list(integer(0)))
 		split(seq_len(n),ceiling(seq_len(n)*min(k,n)/n))
@@ -214,6 +219,10 @@ It seems that the union function in the terra package is approx. equally fast th
 my_union_terra <- function(a,b) {
 	if (! class(a)[1] == "SpatVector") {a <- vect(a)}
 	if (! class(b)[1] == "SpatVector") {b <- vect(b)}
+	# stop when the coordinate systems differ:
+	if (sf::st_crs(terra::crs(a)) != sf::st_crs(terra::crs(b))) {
+		cumi_stop("union of layers in different coordinate systems; transform them to the same coordinate system first (see `cumi_transform_crs()`).")
+	}
 	result <- terra::union(a,b)
 	return(st_as_sf(result))
 }
@@ -659,6 +668,7 @@ cumi_process_pressure <- function(pressureData,pressureType,suffix) {
 			return(pressureData)
 		}
 	}
+	pressureData <- cumi_transform_crs(pressureData,paste0("pressure layer for ",pressureType," (impact_",suffix,")"))
 	intensity_layer <- cumi_buffer_intensity(pressureData,pressureType)
 	if (store_pressure_maps) {
 		st_write(dplyr::rename(intensity_layer,MOP = intensity), pressure_maps_file, layer=paste("mop_",suffix,sep=""))
@@ -799,6 +809,52 @@ cumi_check_values <- function(data, column, allowed = NULL, what = "the data", a
 		}
 	}
 }
+
+
+cumi_transform_crs <- function(x, what, assume_missing = FALSE) {
+	#
+	# transform a layer to the coordinate system `coordSystem` as defined in the setup
+	#
+	# x              - sf layer, terra SpatVector or terra SpatRaster
+	# what           - short description of the layer for the messages to the user
+	# assume_missing - what to do when the layer has no coordinate system:
+	#                  FALSE = stop; TRUE = assume it is in `coordSystem` (with a message). Use TRUE only for data
+	#                  known to be in `coordSystem`, e.g. files that lack the coordinate system but have its coordinates
+	#
+	# Layers in another coordinate system are transformed (with a message), except for rasters: they would have to be
+	# resampled, so the script stops (make polygons first, or convert the raster in a GIS).
+	#
+	target <- paste0("EPSG:",coordSystem)
+	is_raster <- inherits(x,"SpatRaster")
+	if (inherits(x,"sf") || inherits(x,"sfc")) {
+		current <- sf::st_crs(x)
+		is_missing <- is.na(current)
+	} else {
+		is_missing <- is.na(terra::crs(x)) || terra::crs(x) == ""
+		current <- if (is_missing) {NA} else {sf::st_crs(terra::crs(x))}
+	}
+	if (is_missing) {
+		if (! assume_missing) {
+			cumi_stop(what," has no coordinate system. Please define it in the data or transform the data to EPSG:",coordSystem,".")
+		}
+		cumi_message(what," has no coordinate system, assuming it is EPSG:",coordSystem,".")
+		if (inherits(x,"sf") || inherits(x,"sfc")) {sf::st_crs(x) <- sf::st_crs(coordSystem)} else {terra::crs(x) <- target}
+		return(x)
+	}
+	if (current == sf::st_crs(coordSystem)) {return(x)}
+	if (identical(current$proj4string,sf::st_crs(coordSystem)$proj4string)) {
+		# the same coordinate system, just written differently (e.g. a definition without EPSG identifiers): use the standard one
+		if (inherits(x,"sf") || inherits(x,"sfc")) {sf::st_crs(x) <- sf::st_crs(coordSystem)} else {terra::crs(x) <- target}
+		return(x)
+	}
+	crs_name <- if (is.na(current$epsg)) {current$Name} else {paste0("EPSG:",current$epsg)}
+	if (is_raster) {
+		cumi_stop(what," is a raster in another coordinate system (",crs_name,"). Rasters are not converted ",
+			"automatically; please transform it to EPSG:",coordSystem," or convert it to polygons first.")
+	}
+	cumi_message(what," is in the coordinate system '",crs_name,"', transforming to EPSG:",coordSystem,".")
+	if (inherits(x,"sf") || inherits(x,"sfc")) {sf::st_transform(x,sf::st_crs(coordSystem))} else {terra::project(x,target)}
+}
 ```
 
 # The assessment
@@ -887,7 +943,7 @@ The spatial extent of the assessment area is determined by the HELCOM Assessment
 if (! use_pre_calculated_data) {
 	cumi_message("preparing assessment area layer ...")
 	area_file <- file.path(myDir,"Base/HELCOM_subbasins_2022.shp")
-	areaLayer <- st_read(area_file) %>% dplyr::select(-c(Area_km2,Shape_Leng,Shape_Le_1,Shape_Area)) %>% st_make_valid()
+	areaLayer <- st_read(area_file) %>% cumi_transform_crs("assessment area layer") %>% dplyr::select(-c(Area_km2,Shape_Leng,Shape_Le_1,Shape_Area)) %>% st_make_valid()
 }
 if (! do_cumi && store_pressure_maps) {
 	# we want an alternative clip layer for the stored pressure maps if we are not using the combined biotope map.
@@ -905,7 +961,7 @@ To enable assigning data to specific countries, the assessment area is supplemen
 if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("loading and supplementing country information ...")
 	country_file <- file.path(myDir,"Base/countries.shp")
-	countryLayer <- st_read(country_file)
+	countryLayer <- st_read(country_file) %>% cumi_transform_crs("country layer")
 	areaCountryLayer <- st_intersection(areaLayer,countryLayer)
 }
 ```
@@ -998,9 +1054,11 @@ if (! use_pre_calculated_data && do_cumi) {
       # only cells with band1 = 1 have the species, so we discard the rest:
       names(mydata_poly)[1] <- "present"
       mydata_poly <- subset(mydata_poly,mydata_poly$present == 1)
+      # (the species rasters are not in `coordSystem`, so the polygons are transformed; this also makes the depth extraction below work)
+      mydata_poly <- cumi_transform_crs(mydata_poly,paste0("species raster ",myfile),assume_missing=TRUE)
       # for Zostera, ignore any vegetation below 10m depth:
       if (myName == "Zostera") {
-        depths <- rast(file.path(myDir,"Base/depth/w001001.adf"))
+        depths <- rast(file.path(myDir,"Base/depth/w001001.adf")) %>% cumi_transform_crs("depth raster w001001.adf",assume_missing=TRUE)
         tmp <- terra::extract(depths,mydata_poly, 'mean')
         sf_data <- cbind(mydata_poly,tmp) %>% st_as_sf() %>% filter(w001001 >= -10 | is.na(w001001))
       } else  {
@@ -1032,7 +1090,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	# convert to vector data:
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
 	names(salinityLayer)[1] <- "category"
-	salinityLayer <- st_as_sf(salinityLayer) %>% mutate(Sal = 'none') %>% mutate(Sal2 = 'none')
+	salinityLayer <- st_as_sf(salinityLayer) %>% cumi_transform_crs("salinity raster",assume_missing=TRUE) %>% mutate(Sal = 'none') %>% mutate(Sal2 = 'none')
 
 	for (i in 1:nrow(salinityLayer)) {
 		cat <- salinityLayer$category[i]
@@ -1712,9 +1770,9 @@ if (use_pre_calculated_data) {
 	  # outside the biotope boundary are removed in a later step anyway:
 	  ##cumi_message("... intersection with clipLayer ...")
 	  ##fishing_x <- st_read(fishing_file) %>% st_intersection(clipLayer)
-	  fishing_x <- st_read(fishing_file)
+	  fishing_x <- st_read(fishing_file) %>% cumi_transform_crs("fishery data")
 	} else {
-	  fishing_x <- st_read(fishing_file)
+	  fishing_x <- st_read(fishing_file) %>% cumi_transform_crs("fishery data")
 	}
 
 	fishingQuarters <- c("1","2","3","4")
@@ -2373,7 +2431,7 @@ if (! all(file.exists(myFiles))) {
 }
 
 # calculate the mean density:
-ship_mean <- app(rast(myFiles),mean)
+ship_mean <- app(rast(myFiles),mean) %>% cumi_transform_crs("shipping density rasters",assume_missing=TRUE)
 
 # vectorize (this takes some time to process):
 ship_vect <- as.polygons(ship_mean,dissolve=FALSE) %>% st_as_sf()
@@ -2383,7 +2441,7 @@ ship_vect <- filter(ship_vect, mean > 0) %>%
 	dplyr::rename(density = mean)
 
 # add in the average depth per polygon:
-depths <- rast(file.path(myDir,"Base/depth rasters/depth_1x1km.tif"))
+depths <- rast(file.path(myDir,"Base/depth rasters/depth_1x1km.tif")) %>% cumi_transform_crs("depth raster depth_1x1km.tif",assume_missing=TRUE)
 tmp <- terra::extract(depths,vect(ship_vect), 'mean')
 ship_vect <- cbind(ship_vect,tmp) %>% st_as_sf() %>% dplyr::rename(depth = depth_1x1km)
 
