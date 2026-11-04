@@ -736,12 +736,17 @@ cumi_write_cache <- function(x, path) {
 	# An existing file is only overwritten after the user has confirmed, so that a backup can be made before.
 	# If the user does not confirm (or cannot be asked as the script is not run interactively, e.g. when knitting),
 	# nothing is overwritten and the layer is NOT lost: it is written to a new file with a timestamp instead.
+	# When the setting `silently_overwrite_precalculated_file` is TRUE, the user is not asked: the file is overwritten
+	# (with a message), also when the script is not run interactively.
 	#
 	# x    - the sf layer to write
 	# path - the file to write to
 	#
 	if (! file.exists(path)) {
 		st_write(x, path)
+	} else if (silently_overwrite_precalculated_file) {
+		cumi_message("the file ",path," already exists and is overwritten (`silently_overwrite_precalculated_file` is TRUE) ...")
+		st_write(x, path, delete_dsn = TRUE)
 	} else {
 		answer <- ""
 		if (interactive()) {
@@ -844,7 +849,8 @@ cumi_transform_crs <- function(x, what, assume_missing = FALSE) {
 	if (current == sf::st_crs(coordSystem)) {return(x)}
 	if (identical(current$proj4string,sf::st_crs(coordSystem)$proj4string)) {
 		# the same coordinate system, just written differently (e.g. a definition without EPSG identifiers): use the standard one
-		if (inherits(x,"sf") || inherits(x,"sfc")) {sf::st_crs(x) <- sf::st_crs(coordSystem)} else {terra::crs(x) <- target}
+		# (the coordinates stay as they are; for sf we go via NA to avoid sf's "replacing crs does not reproject data" warning)
+		if (inherits(x,"sf") || inherits(x,"sfc")) {sf::st_crs(x) <- NA; sf::st_crs(x) <- sf::st_crs(coordSystem)} else {terra::crs(x) <- target}
 		return(x)
 	}
 	crs_name <- if (is.na(current$epsg)) {current$Name} else {paste0("EPSG:",current$epsg)}
@@ -912,7 +918,13 @@ dissolve_fishing_layer <- FALSE
 Normally, a pressure layer without any feature stops the script (for example because a filter on the `Type` or `Status` column does not match, or the file is empty), as this usually points to a mistake in the data or the code. When the data cover only a small region, however, it is normal that some pressure types do not occur there. With the following setting such empty layers are skipped, with a message each time: the corresponding `impact_` column is then filled with "none" for all polygons, and the confidence value is kept as the code sets it. Note that this does not apply to the fishery and shipping data, which have their own checks:
 
 ```{r skip_empty_pressure_layers}
-skip_empty_pressure_layers <- FALSE
+skip_empty_pressure_layers <- TRUE
+```
+
+The layers that take a long time to calculate (the biotope layer and the fishing pressure) are written to a pre-calculated file, which can be used again with `use_pre_calculated_data`. When such a file already exists, the script asks whether it may be overwritten (so that you can make a backup first); when it is not run interactively, the file is not overwritten but a new file with a time stamp is written instead. If you do not want to be asked and the existing file may always be overwritten, set the following to `TRUE`. The script then overwrites the file without asking:
+
+```{r silently_overwrite_precalculated_file}
+silently_overwrite_precalculated_file <- FALSE
 ```
 
 The data use the CumI categories "very low", "low", "moderate" and "high" for various steps. We put them into a vector here so we can use them later as an R 'factor':
@@ -962,7 +974,8 @@ if (! use_pre_calculated_data && do_cumi) {
 	cumi_message("loading and supplementing country information ...")
 	country_file <- file.path(myDir,"Base/countries.shp")
 	countryLayer <- st_read(country_file) %>% cumi_transform_crs("country layer")
-	areaCountryLayer <- st_intersection(areaLayer,countryLayer)
+	# the attributes are constant per feature (st_agr), which avoids the sf warning about spatially constant attributes
+	areaCountryLayer <- st_intersection(st_set_agr(areaLayer,"constant"),st_set_agr(countryLayer,"constant"))
 }
 ```
 
@@ -1006,7 +1019,7 @@ if (! use_pre_calculated_data && do_cumi) {
 	# (Note: this may also clip away parts of the assessment area when there is no biotope
 	# information there, but as we cannot use those parts without biotope information anyway, this is ok)
 	cumi_message("integrating area and country information ...")
-	areaCountryBiotopeLayer <- st_intersection(biotopeBalticLayer,areaCountryLayer)
+	areaCountryBiotopeLayer <- st_intersection(st_set_agr(biotopeBalticLayer,"constant"),st_set_agr(areaCountryLayer,"constant"))
 	# only retain the columns we need:
 	areaCountryBiotopeLayer <- areaCountryBiotopeLayer %>%
 		select(all_of(c("Biotope","level_2","HELCOM_ID","Territory")))
@@ -1085,7 +1098,7 @@ Now, we have an initial biotope layer with the corresponding information on subb
 ```{r salinityData}
 if (! use_pre_calculated_data && do_cumi) {
 		cumi_message("integrating salinity data ...")
-	salinity_file <- file.path(myDir,"../Data-2022/Salinity/BALANCE_BOTTOM_SALINITY.tif")
+	salinity_file <- file.path(myDir,"Salinity/BALANCE_BOTTOM_SALINITY.tif")
 	salinityLayer <- rast(salinity_file)
 	# convert to vector data:
 	salinityLayer <- terra::as.polygons(salinityLayer, dissolve=TRUE)
@@ -1128,7 +1141,7 @@ if (! use_pre_calculated_data && do_cumi) {
 }
 ```
 
-There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, these areas will be tentatively assigned a "moderate" sensitivity.
+There is a limitation in the salinity dataset. It does not cover the entire assessment area. E.g., the "Limfjord", the innermost part of "Eckernförder Bucht" and the innermost part of the "Gulf of Finland" are without salinity assignment together with a number of smaller fjords. As can be seen from the code below, such areas will be tentatively assigned a "moderate" sensitivity.
 
 ### Sensitivity assignment
 In the following step, the sensitivities will be assigned based on the biotope, salinity and country information. The current values are a result of the agreed values in the CumI report dated 2021-09-07, supplemented by values used in the corresponding CumI assessment dated 2021-08-23 (CumI-assessment-2021-08-23T2157.gpkg; unfortunately, not all values used in the last CumI assessment were reported in the CumI report). In case of erroneous multiple assignments for the same biotope/salinity combination, the value covering the larger area in the last assessment was taken. Sensitivity values of country/biotope/salinity combinations not yet assigned but necessary due to the new biotope map and updated salinity map were preferably taken from the adjacent salinity class within the same country/biotope combination and marked as `# assumed` in the following code. These should be reviewed by the member states.
@@ -1918,7 +1931,7 @@ if (do_cumi) {
 }
 ```
 
-These are no polygon data for the assessment period (so the next part is skipped).
+There are no polygon data for the assessment period (so the next part is skipped).
 
 ```{r eval=FALSE}
 cumi_message("... shellfish (areas) ...")
@@ -2436,6 +2449,7 @@ ship_mean <- app(rast(myFiles),mean) %>% cumi_transform_crs("shipping density ra
 # vectorize (this takes some time to process):
 ship_vect <- as.polygons(ship_mean,dissolve=FALSE) %>% st_as_sf()
 ship_vect <- filter(ship_vect, mean > 0) %>%
+	st_set_agr("constant") %>% # density is constant per cell; avoids sf's warning when splitting into single polygons
 	st_cast("MULTIPOLYGON") %>%
 	st_cast("POLYGON") %>%
 	dplyr::rename(density = mean)
